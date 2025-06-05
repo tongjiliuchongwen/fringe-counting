@@ -1,4 +1,4 @@
-// PaddleOCR.js 包装类 - 专为小数点识别优化
+// PaddleOCR.js 包装类 - 专为小数点识别优化的完整版
 class PaddleOCRWrapper {
     constructor() {
         this.isInitialized = false;
@@ -15,7 +15,7 @@ class PaddleOCRWrapper {
             
             // 检查PaddleJS是否可用
             if (!window.paddle || !window.paddle.ocr) {
-                throw new Error('PaddleOCR库未正确加载');
+                throw new Error('PaddleOCR库未正确加载，请检查网络连接');
             }
             
             // 初始化OCR模型
@@ -313,20 +313,198 @@ class PaddleOCRWrapper {
         return ratio > 0.3 && ratio < 0.7; // 点状特征
     }
 
-    // 复用原有的策略方法（保持兼容性）
+    // 保护小数点
+    protectDecimalPoints(data, width, height) {
+        // 简化实现：对可能的小数点区域进行增强
+        const dotCandidates = this.detectDecimalDots(data, width, height);
+        
+        dotCandidates.forEach(dot => {
+            this.enhanceDecimalDot(data, width, height, dot.x, dot.y);
+        });
+    }
+
+    // 增强小数点
+    enhanceDecimalDot(data, width, height, x, y) {
+        const radius = 3;
+        for (let dy = -radius; dy <= radius; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    const idx = (ny * width + nx) * 4;
+                    // 适度增强对比度
+                    data[idx] = data[idx + 1] = data[idx + 2] = data[idx] > 128 ? 255 : 0;
+                }
+            }
+        }
+    }
+
+    // 复用原有的策略方法（从enhanced-ocr.js）
     strategy1_BasicThreshold(ctx, canvas) {
-        // ... 复制原有实现
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        
+        let totalBrightness = 0;
+        let pixelCount = 0;
+        
+        for (let i = 0; i < data.length; i += 4) {
+            const brightness = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            totalBrightness += brightness;
+            pixelCount++;
+        }
+        
+        const avgBrightness = totalBrightness / pixelCount;
+        const threshold = Math.max(140, Math.min(180, avgBrightness - 10));
+        
+        let whitePixels = 0, blackPixels = 0;
+        
+        for (let i = 0; i < data.length; i += 4) {
+            const brightness = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            const value = brightness > threshold ? 255 : 0;
+            data[i] = data[i + 1] = data[i + 2] = value;
+            data[i + 3] = 255;
+            
+            if (value === 255) whitePixels++;
+            else blackPixels++;
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        return { 
+            strategy: '基础阈值', 
+            threshold, 
+            avgBrightness: avgBrightness.toFixed(1),
+            whitePixels,
+            blackPixels
+        };
     }
 
     strategy2_OTSUThreshold(ctx, canvas) {
-        // ... 复制原有实现
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        
+        // 计算灰度直方图
+        const histogram = new Array(256).fill(0);
+        const grayData = [];
+        
+        for (let i = 0; i < data.length; i += 4) {
+            const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+            histogram[gray]++;
+            grayData.push(gray);
+        }
+        
+        // OTSU阈值计算
+        const total = grayData.length;
+        let sum = 0;
+        for (let i = 0; i < 256; i++) sum += i * histogram[i];
+        
+        let sumB = 0;
+        let wB = 0;
+        let wF = 0;
+        let max = 0;
+        let threshold = 0;
+        
+        for (let i = 0; i < 256; i++) {
+            wB += histogram[i];
+            if (wB === 0) continue;
+            wF = total - wB;
+            if (wF === 0) break;
+            
+            sumB += i * histogram[i];
+            const mB = sumB / wB;
+            const mF = (sum - sumB) / wF;
+            const between = wB * wF * (mB - mF) * (mB - mF);
+            
+            if (between > max) {
+                max = between;
+                threshold = i;
+            }
+        }
+        
+        let whitePixels = 0, blackPixels = 0;
+        
+        // 应用OTSU阈值
+        let idx = 0;
+        for (let i = 0; i < data.length; i += 4) {
+            const value = grayData[idx++] > threshold ? 255 : 0;
+            data[i] = data[i + 1] = data[i + 2] = value;
+            data[i + 3] = 255;
+            
+            if (value === 255) whitePixels++;
+            else blackPixels++;
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        return { 
+            strategy: 'OTSU自动', 
+            threshold,
+            variance: max.toFixed(2),
+            whitePixels,
+            blackPixels
+        };
     }
 
     strategy3_AdaptiveThreshold(ctx, canvas) {
-        // ... 复制原有实现
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const width = canvas.width;
+        const height = canvas.height;
+        const windowSize = Math.min(width, height) > 20 ? 11 : 7;
+        
+        // 创建灰度图像
+        const grayImage = new Array(height).fill(null).map(() => new Array(width).fill(0));
+        
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                grayImage[y][x] = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+            }
+        }
+        
+        let whitePixels = 0, blackPixels = 0;
+        
+        // 自适应阈值处理
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                const gray = grayImage[y][x];
+                
+                // 计算局部平均值
+                const x1 = Math.max(0, x - windowSize);
+                const y1 = Math.max(0, y - windowSize);
+                const x2 = Math.min(width - 1, x + windowSize);
+                const y2 = Math.min(height - 1, y + windowSize);
+                
+                let sum = 0;
+                let count = 0;
+                for (let ly = y1; ly <= y2; ly++) {
+                    for (let lx = x1; lx <= x2; lx++) {
+                        sum += grayImage[ly][lx];
+                        count++;
+                    }
+                }
+                
+                const localMean = sum / count;
+                const threshold = localMean - 8; // 可调参数
+                
+                const value = gray > threshold ? 255 : 0;
+                data[idx] = data[idx + 1] = data[idx + 2] = value;
+                data[idx + 3] = 255;
+                
+                if (value === 255) whitePixels++;
+                else blackPixels++;
+            }
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        return { 
+            strategy: '自适应阈值', 
+            windowSize,
+            whitePixels,
+            blackPixels
+        };
     }
 
-    // 获取策略画布
+    // 获取策略预览画布
     getStrategyCanvases() {
         return this.strategyCanvases;
     }
