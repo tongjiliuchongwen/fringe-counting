@@ -21,7 +21,7 @@ let scaleY = 1;
 
 let brightnessData = []; // [{ frameTime: number, avgBrightness: number }]
 let analysisResults = []; // [{ occurrenceIndex: number, frameTime: number, ocrValue: number }]
-let currentMode = 'brightness'; // 'brightness', 'ocr_define', 'analyzing'
+let currentMode = 'brightness'; // 'brightness', 'ocr_define', 'ready_to_analyze', 'analyzing'
 let localMaximaFrames = []; // Stores { time: number, value: number }
 let currentMaximaProcessingIndex = 0; // For tracking progress through maxima during OCR
 let chartInstance = null;
@@ -32,13 +32,12 @@ async function initializeOCR() {
     statusMessage.textContent = '正在初始化 OCR 服务... 请稍候。';
     try {
         ocrWorker = await Tesseract.createWorker('eng', 1, {
-             logger: m => {
+            logger: m => {
                 if (m.status === 'recognizing text') {
-                    // Update status for the specific frame being processed
                     const progressMsg = `OCR 识别中 (峰值 ${currentMaximaProcessingIndex + 1}/${localMaximaFrames.length}): ${Math.round(m.progress * 100)}%`;
                     statusMessage.textContent = progressMsg;
                 }
-             }
+            }
         });
         await ocrWorker.loadLanguage('eng');
         await ocrWorker.initialize('eng');
@@ -54,19 +53,16 @@ initializeOCR();
 
 // --- Helper: Clear and Redraw Defined Rectangles ---
 function clearAndRedrawRects() {
-    // Clear with unscaled dimensions as it clears the canvas buffer
     drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
-    
+
     if (brightnessRect) {
         drawingCtx.strokeStyle = 'rgba(255,0,0,0.7)';
         drawingCtx.lineWidth = 2;
-        // brightnessRect stores scaled coords, draw them directly
         drawingCtx.strokeRect(brightnessRect.x, brightnessRect.y, brightnessRect.width, brightnessRect.height);
     }
     if (ocrRect) {
         drawingCtx.strokeStyle = 'rgba(0,0,255,0.7)';
         drawingCtx.lineWidth = 2;
-        // ocrRect stores scaled coords, draw them directly
         drawingCtx.strokeRect(ocrRect.x, ocrRect.y, ocrRect.width, ocrRect.height);
     }
 }
@@ -85,13 +81,13 @@ videoUpload.addEventListener('change', (event) => {
         analysisResults = [];
         brightnessData = [];
         localMaximaFrames = [];
-        currentMode = 'brightness'; // Reset mode
+        currentMode = 'brightness';
         startAnalysisBtn.disabled = true;
-        startAnalysisBtn.textContent = '开始完整分析'; // Reset button text
-        
+        startAnalysisBtn.textContent = '开始完整分析';
+
         if (chartInstance) chartInstance.destroy();
         resultsTableContainer.innerHTML = "";
-        clearAndRedrawRects(); // Clear any previous drawings
+        clearAndRedrawRects();
     }
 });
 
@@ -107,13 +103,12 @@ videoPlayer.addEventListener('loadedmetadata', () => {
         scaleY = drawingCanvas.height / drawingCanvas.clientHeight;
     } else {
         console.warn("drawingCanvas clientWidth or clientHeight is 0. Scale factors might be incorrect.");
-        scaleX = 1; 
+        scaleX = 1;
         scaleY = 1;
     }
 
     console.log(`Canvas scaling factors: scaleX=${scaleX}, scaleY=${scaleY}`);
     console.log(`Canvas buffer: ${drawingCanvas.width}x${drawingCanvas.height}, Display: ${drawingCanvas.clientWidth}x${drawingCanvas.clientHeight}`);
-
 
     statusMessage.textContent = '视频已加载。请在视频上绘制亮度分析区域。';
     currentMode = 'brightness';
@@ -122,7 +117,6 @@ videoPlayer.addEventListener('loadedmetadata', () => {
     startAnalysisBtn.disabled = true;
     clearAndRedrawRects();
 });
-
 
 videoPlayer.addEventListener('error', (e) => {
     console.error("Video Error:", e);
@@ -135,7 +129,6 @@ drawingCanvas.addEventListener('mousedown', (e) => {
     isDrawing = true;
     currentDrawingStart.x = e.offsetX * scaleX;
     currentDrawingStart.y = e.offsetY * scaleY;
-    
     clearAndRedrawRects();
 });
 
@@ -144,7 +137,7 @@ drawingCanvas.addEventListener('mousemove', (e) => {
     const currentX = e.offsetX * scaleX;
     const currentY = e.offsetY * scaleY;
 
-    clearAndRedrawRects(); 
+    clearAndRedrawRects();
 
     drawingCtx.strokeStyle = (currentMode === 'brightness') ? 'rgba(255,0,0,0.5)' : 'rgba(0,0,255,0.5)';
     drawingCtx.lineWidth = 1;
@@ -157,7 +150,7 @@ drawingCanvas.addEventListener('mouseup', (e) => {
     const endX = e.offsetX * scaleX;
     const endY = e.offsetY * scaleY;
 
-    const drawnRect = { 
+    const drawnRect = {
         x: Math.min(currentDrawingStart.x, endX),
         y: Math.min(currentDrawingStart.y, endY),
         width: Math.abs(endX - currentDrawingStart.x),
@@ -166,7 +159,7 @@ drawingCanvas.addEventListener('mouseup', (e) => {
 
     if (drawnRect.width < 5 || drawnRect.height < 5) {
         console.log("Drawn rectangle too small.");
-        clearAndRedrawRects(); 
+        clearAndRedrawRects();
         return;
     }
 
@@ -175,15 +168,15 @@ drawingCanvas.addEventListener('mouseup', (e) => {
         console.log("Brightness Rect (scaled for processing):", brightnessRect);
         currentMode = 'ocr_define';
         statusMessage.textContent = `亮度区域已定义。现在请绘制数字识别区域 (此区域将用于所有峰值帧)。`;
-        startAnalysisBtn.disabled = true; 
+        startAnalysisBtn.disabled = true;
     } else if (currentMode === 'ocr_define') {
         ocrRect = drawnRect;
         console.log("OCR Rect (scaled for processing):", ocrRect);
-        currentMode = 'ready_to_analyze'; 
+        currentMode = 'ready_to_analyze';
         statusMessage.textContent = `数字识别区域已定义。点击 "开始完整分析" 按钮。`;
-        startAnalysisBtn.disabled = false; 
+        startAnalysisBtn.disabled = false;
     }
-    clearAndRedrawRects(); 
+    clearAndRedrawRects();
 });
 
 startAnalysisBtn.addEventListener('click', async () => {
@@ -211,9 +204,11 @@ async function analyzeVideoBrightnessAndOCR() {
     const duration = videoPlayer.duration;
     if (isNaN(duration) || duration === 0) {
         statusMessage.textContent = "视频时长无效，无法分析。";
-        startAnalysisBtn.disabled = false; currentMode = 'brightness'; return;
+        startAnalysisBtn.disabled = false;
+        currentMode = 'brightness';
+        return;
     }
-    const frameRate = 25; 
+    const frameRate = 25;
     const interval = 1 / frameRate;
     let currentTime = 0;
     let processedFrames = 0;
@@ -238,31 +233,31 @@ async function analyzeVideoBrightnessAndOCR() {
             pixelCount++;
         }
         brightnessData.push({ frameTime: timeAtCapture, avgBrightness: pixelCount > 0 ? totalBrightness / pixelCount : 0 });
-        
+
         processedFrames++;
         statusMessage.textContent = `分析亮度中... ${((timeAtCapture / duration) * 100).toFixed(1)}% (帧: ${processedFrames})`;
         currentTime += interval;
         if (currentTime > duration && timeAtCapture < duration) currentTime = duration;
         else if (currentTime > duration) break;
     }
-    
+
     console.log("Brightness Data collected:", brightnessData.length, "points");
     findLocalMaxima();
 
     if (localMaximaFrames.length > 0) {
         statusMessage.textContent = `找到 ${localMaximaFrames.length} 个亮度峰值。开始OCR处理...`;
         for (let i = 0; i < localMaximaFrames.length; i++) {
-            currentMaximaProcessingIndex = i; 
+            currentMaximaProcessingIndex = i;
             const frameData = localMaximaFrames[i];
             statusMessage.textContent = `处理峰值 ${i + 1}/${localMaximaFrames.length} (时间: ${frameData.time.toFixed(2)}s)。跳转并准备OCR...`;
-            
-            await new Promise(resolve => { 
+
+            await new Promise(resolve => {
                 const onSeekedOCR = () => { videoPlayer.removeEventListener('seeked', onSeekedOCR); videoPlayer.pause(); resolve(); };
                 videoPlayer.addEventListener('seeked', onSeekedOCR);
                 videoPlayer.currentTime = frameData.time;
             });
-            
-            await performOCR(frameData.time, i); 
+
+            await performOCR(frameData.time, i);
         }
         statusMessage.textContent = '所有亮度最大值帧处理完毕。正在生成结果...';
         displayResults();
@@ -272,7 +267,7 @@ async function analyzeVideoBrightnessAndOCR() {
 
     startAnalysisBtn.disabled = false;
     startAnalysisBtn.textContent = '开始完整分析';
-    currentMode = 'brightness'; 
+    currentMode = 'brightness';
 }
 
 function findLocalMaxima() {
@@ -281,44 +276,65 @@ function findLocalMaxima() {
     for (let i = 1; i < brightnessData.length - 1; i++) {
         if (brightnessData[i].avgBrightness > brightnessData[i - 1].avgBrightness &&
             brightnessData[i].avgBrightness > brightnessData[i + 1].avgBrightness) {
-            localMaximaFrames.push({time: brightnessData[i].frameTime, value: brightnessData[i].avgBrightness});
+            localMaximaFrames.push({ time: brightnessData[i].frameTime, value: brightnessData[i].avgBrightness });
         }
     }
     console.log("Local Maxima Frames (timestamps & values):", localMaximaFrames);
 }
 
 async function performOCR(frameTimeAtMaxBrightness, occurrenceIdx) {
-    if (!ocrRect || !ocrWorker) { 
+    if (!ocrRect || !ocrWorker) {
         statusMessage.textContent = 'OCR 区域未定义或 OCR 服务未就绪。';
         analysisResults.push({
             occurrenceIndex: occurrenceIdx + 1,
             frameTime: frameTimeAtMaxBrightness,
-            value: NaN 
+            value: NaN
         });
         return;
     }
-    
+
+    // 1. Draw the current frame onto processing canvas
     processingCtx.drawImage(videoPlayer, 0, 0, processingCanvas.width, processingCanvas.height);
 
+    // 2. Extract the ocrRect region to a temporary canvas
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = ocrRect.width;   
+    tempCanvas.width = ocrRect.width;
     tempCanvas.height = ocrRect.height;
     const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.drawImage(processingCanvas, ocrRect.x, ocrRect.y, ocrRect.width, ocrRect.height, 0, 0, ocrRect.width, ocrRect.height);
+    tempCtx.drawImage(
+        processingCanvas,
+        ocrRect.x, ocrRect.y, ocrRect.width, ocrRect.height,
+        0, 0, ocrRect.width, ocrRect.height
+    );
 
-    // --- START OCR DEBUGGING & PREPROCESSING ---
-    // 1. Preprocessing: Grayscale and Binarization
-    const ocrImageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-    const ocrData = ocrImageData.data;
-    const threshold = 128; // ADJUST THIS THRESHOLD AS NEEDED (0-255)
-    for (let i = 0; i < ocrData.length; i += 4) {
-        const avg = (ocrData[i] + ocrData[i + 1] + ocrData[i + 2]) / 3;
-        const color = avg > threshold ? 255 : 0; 
-        ocrData[i] = color; ocrData[i + 1] = color; ocrData[i + 2] = color;
+    // 3. Read pixel data from this region
+    const { width: w, height: h } = tempCanvas;
+    const imgData = tempCtx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+
+    // 4. Color-based segmentation (normalize to black & white)
+    //    Assume white digits (R,G,B >= WHITE_THRESHOLD), background is bluish-gray
+    const WHITE_THRESHOLD = 200;
+    for (let i = 0; i < data.length; i += 4) {
+        const r = data[i + 0];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        if (r >= WHITE_THRESHOLD && g >= WHITE_THRESHOLD && b >= WHITE_THRESHOLD) {
+            // Digit pixel → set to white
+            data[i + 0] = 255;
+            data[i + 1] = 255;
+            data[i + 2] = 255;
+        } else {
+            // Background → set to black
+            data[i + 0] = 0;
+            data[i + 1] = 0;
+            data[i + 2] = 0;
+        }
+        data[i + 3] = 255; // Fully opaque
     }
-    tempCtx.putImageData(ocrImageData, 0, 0);
+    tempCtx.putImageData(imgData, 0, 0);
 
-    // 2. Display the tempCanvas (image sent to Tesseract) for debugging
+    // 5. (Optional) Display this binary result on a debug canvas
     let debugCanvas = document.getElementById('debugOcrCanvas');
     if (!debugCanvas) {
         debugCanvas = document.createElement('canvas');
@@ -328,49 +344,43 @@ async function performOCR(frameTimeAtMaxBrightness, occurrenceIdx) {
         debugCanvas.style.position = "fixed";
         debugCanvas.style.top = "10px";
         debugCanvas.style.right = "10px";
-        debugCanvas.style.zIndex = "10000"; 
-        debugCanvas.style.backgroundColor = "lightgray"; 
+        debugCanvas.style.zIndex = "10000";
+        debugCanvas.style.backgroundColor = "#eee";
     }
-    debugCanvas.width = tempCanvas.width;
-    debugCanvas.height = tempCanvas.height;
+    debugCanvas.width = w;
+    debugCanvas.height = h;
     debugCanvas.getContext('2d').drawImage(tempCanvas, 0, 0);
-    // --- END OCR DEBUGGING & PREPROCESSING ---
 
+    // 6. Pass this processed binary image to Tesseract for OCR
     try {
-        // Tesseract Page Segmentation Mode (PSM)
-        // Common values:
-        // 6: Assume a single uniform block of text.
-        // 7: Treat the image as a single text line. (GOOD STARTING POINT)
-        // 8: Treat the image as a single word.
-        // 10: Treat the image as a single character.
-        // 13: Raw line. Treat the image as a single text line, bypassing Tesseract-specific hacks.
-        const psmValue = '7'; // MODIFY THIS VALUE TO TEST DIFFERENT PSMs (e.g., '6', '8', '10', '13')
-
+        const psmValue = '7'; // Can be adjusted to 6, 8, 10, etc.
         await ocrWorker.setParameters({
             tessedit_char_whitelist: '0123456789.',
-            tessedit_pageseg_mode: psmValue, 
+            tessedit_pageseg_mode: psmValue,
         });
-        const { data: { text } } = await ocrWorker.recognize(tempCanvas); // Use the preprocessed tempCanvas
+        const { data: { text } } = await ocrWorker.recognize(tempCanvas);
         console.log(`PSM: ${psmValue} | OCR @ ${frameTimeAtMaxBrightness.toFixed(2)}s (Occ ${occurrenceIdx+1}): "${text.trim()}"`);
-        
+
         const numberMatch = text.trim().match(/(\d+(\.\d{1,2})?)/);
         let ocrValue = NaN;
-        if (numberMatch && numberMatch[0]) ocrValue = parseFloat(numberMatch[0]);
-        else console.warn("OCR did not find a valid number in:", text.trim());
+        if (numberMatch && numberMatch[0]) {
+            ocrValue = parseFloat(numberMatch[0]);
+        } else {
+            console.warn("OCR did not find a valid number in:", text.trim());
+        }
 
         analysisResults.push({
             occurrenceIndex: occurrenceIdx + 1,
             frameTime: frameTimeAtMaxBrightness,
             value: ocrValue
         });
-        
     } catch (error) {
         console.error("OCR Error:", error);
         statusMessage.textContent = `OCR 失败 (峰值 ${occurrenceIdx+1}): ${error.message}.`;
         analysisResults.push({
             occurrenceIndex: occurrenceIdx + 1,
             frameTime: frameTimeAtMaxBrightness,
-            value: NaN 
+            value: NaN
         });
     }
 }
@@ -380,7 +390,7 @@ function displayResults() {
     if (analysisResults.length === 0) {
         tableHTML += '<tr><td colspan="3">没有可显示的结果。</td></tr>';
     } else {
-        analysisResults.sort((a,b) => a.occurrenceIndex - b.occurrenceIndex).forEach(result => { 
+        analysisResults.sort((a, b) => a.occurrenceIndex - b.occurrenceIndex).forEach(result => {
             tableHTML += `<tr><td>${result.occurrenceIndex}</td><td>${result.frameTime.toFixed(2)}</td><td>${isNaN(result.value) ? 'N/A (识别失败)' : result.value.toFixed(2)}</td></tr>`;
         });
     }
@@ -389,7 +399,7 @@ function displayResults() {
 
     if (chartInstance) chartInstance.destroy();
     chartInstance = new Chart(resultsChartCtx, {
-        type: 'scatter', 
+        type: 'scatter',
         data: {
             datasets: [{
                 label: '识别的数字 vs. 亮度最大值序号',
@@ -400,7 +410,8 @@ function displayResults() {
             }]
         },
         options: {
-            responsive: true, maintainAspectRatio: false,
+            responsive: true,
+            maintainAspectRatio: false,
             scales: {
                 x: { type: 'linear', title: { display: true, text: '亮度最大值出现次数 (序号)' }, ticks: { stepSize: 1 } },
                 y: { title: { display: true, text: '识别的数字' }, beginAtZero: false }
@@ -411,7 +422,7 @@ function displayResults() {
                         label: function(context) {
                             let label = context.dataset.label || '';
                             if (label) label += ': ';
-                            const pointData = analysisResults.find(r => r.occurrenceIndex === context.parsed.x); 
+                            const pointData = analysisResults.find(r => r.occurrenceIndex === context.parsed.x);
                             if (pointData && context.parsed.y !== null) {
                                 label += `数字: ${context.parsed.y.toFixed(2)} (帧时间: ${pointData.frameTime.toFixed(2)}s)`;
                             } else if (pointData) {
