@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>视频分析工具</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        #videoContainer {
+            position: relative;
+            width: 640px; /* 根据需要调整 */
+            height: 360px; /* 根据需要调整 */
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+        }
+        #videoPlayer, #drawingCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #drawingCanvas {
+            /* border: 1px solid black;  Removed border here as container has one */
+            z-index: 10; /* 使Canvas在视频之上 */
+            cursor: crosshair;
+        }
+        #controls, #results {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        #controls button {
+            padding: 8px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        #controls button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #controls input[type="file"] {
+            padding: 5px;
+        }
+        #statusMessage {
+            font-style: italic;
+            color: #555;
+            margin-top: 10px;
+        }
+        #resultsTableContainer table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        #resultsTableContainer th, #resultsTableContainer td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        #resultsTableContainer th {
+            background-color: #f0f0f0;
+        }
+        #chartContainer {
+            width: 100%; /* Responsive width */
+            max-width: 600px; /* Max width for larger screens */
+            height: 400px;
+            margin-top:20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>视频分析工具</h1>
+
+    <div id="controls">
+        <input type="file" id="videoUpload" accept="video/*">
+        <button id="startAnalysisBtn" disabled>开始分析亮度区域</button>
+        <p id="statusMessage">请先上传视频。</p>
+    </div>
+
+    <div id="videoContainer">
+        <video id="videoPlayer" controls></video>
+        <canvas id="drawingCanvas"></canvas>
+    </div>
+    <canvas id="processingCanvas" style="display:none;"></canvas> <!-- 隐藏的Canvas用于处理 -->
+
+    <div id="results">
+        <h2>分析结果</h2>
+        <div id="resultsTableContainer"></div>
+        <div id="chartContainer">
+            <canvas id="resultsChart"></canvas>
+        </div>
+    </div>
+
+    <!-- 引入必要的库 -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- <script src="path/to/regression.js"></script> 如果需要曲线拟合 -->
+
+    <script src="app.js"></script>
+</body>
+</html>
