@@ -587,6 +587,10 @@ videoPlayer.addEventListener('loadedmetadata', () => {
     
     console.log(`视频原始尺寸: ${videoNaturalWidth} × ${videoNaturalHeight}`);
     
+    // 🔥 添加这些行来显示视频和画布
+    videoPlayer.style.display = 'block';
+    drawingCanvas.style.display = 'block';
+    
     setTimeout(() => {
         syncCanvasWithVideo();
         updateProgress(-1, '视频已加载。请在视频上绘制亮度分析区域（红色框）。');
