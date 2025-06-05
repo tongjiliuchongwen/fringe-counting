@@ -163,27 +163,32 @@ class SignalProcessor {
     }
 }
 
-// 智能峰值检测器（基于导数法）
+// 智能峰值检测器 (修复版 - 兼容 app.js)
 class PeakDetector {
-    /**
-     * 基于一阶/二阶导数检测局域峰值：
-     *  - 一阶导（中心差分）由正变负
-     *  - 二阶导 < 0
-     * 可选参数：
-     *  - thresholdFactor: 动态高度阈值因子（mean + factor * stdDev）
-     *  - minDistance: 最小峰间距
-     *  - maxPeaks: 最大峰值数量
-     */
     static findPeaks(data, options = {}) {
         const N = data.length;
         if (N < 3) return [];
 
-        // 一阶导
+        // 根据 sensitivity 参数调整阈值
+        let thresholdFactor;
+        switch (options.sensitivity) {
+            case 'low':
+                thresholdFactor = 1.5;  // 高阈值，少峰值
+                break;
+            case 'high':
+                thresholdFactor = 0.3;  // 低阈值，多峰值
+                break;
+            default: // medium
+                thresholdFactor = 0.8;  // 中等阈值
+        }
+
+        // 一阶导数
         const firstDeriv = new Array(N).fill(0);
         for (let i = 1; i < N - 1; i++) {
             firstDeriv[i] = (data[i + 1] - data[i - 1]) / 2;
         }
-        // 二阶导
+        
+        // 二阶导数
         const secondDeriv = new Array(N).fill(0);
         for (let i = 1; i < N - 1; i++) {
             secondDeriv[i] = data[i + 1] - 2 * data[i] + data[i - 1];
@@ -193,34 +198,90 @@ class PeakDetector {
         const mean = data.reduce((a, b) => a + b, 0) / N;
         const variance = data.reduce((a, b) => a + (b - mean) ** 2, 0) / N;
         const stdDev = Math.sqrt(variance);
-        const factor = options.thresholdFactor != null ? options.thresholdFactor : 0.5;
-        const heightThresh = mean + factor * stdDev;
+        const heightThresh = mean + thresholdFactor * stdDev;
 
         // 最小峰间距
-        const minDist = options.minDistance || Math.max(1, Math.floor(N / 30));
+        const minDist = options.minDistance || Math.max(1, Math.floor(N / 20));
 
-        // 候选峰
+        console.log(`峰值检测参数: 阈值=${heightThresh.toFixed(2)}, 最小距离=${minDist}, 敏感度=${options.sensitivity}`);
+
+        // 候选峰值检测
         const candidates = [];
         for (let i = 1; i < N - 1; i++) {
             if (data[i] < heightThresh) continue;
+            
+            // 检查是否为局部最大值（使用导数方法）
             if (firstDeriv[i - 1] > 0 && firstDeriv[i + 1] < 0 && secondDeriv[i] < 0) {
-                candidates.push({ index: i, value: data[i] });
+                // 计算峰值突出度
+                const prominence = this.calculateProminence(data, i);
+                const significance = (data[i] - mean) / stdDev;
+                
+                candidates.push({
+                    index: i,
+                    value: data[i],
+                    prominence: prominence,
+                    significance: significance
+                });
             }
         }
 
-        // 距离过滤 & 限制数量
+        console.log(`找到${candidates.length}个候选峰值`);
+
+        // 距离过滤和选择最佳峰值
         const peaks = [];
-        candidates.sort((a, b) => b.value - a.value);
-        for (const cand of candidates) {
-            if (!peaks.some(p => Math.abs(p.index - cand.index) < minDist)) {
-                peaks.push(cand);
+        candidates.sort((a, b) => b.significance - a.significance); // 按显著性排序
+        
+        for (const candidate of candidates) {
+            let tooClose = false;
+            for (const existing of peaks) {
+                if (Math.abs(candidate.index - existing.index) < minDist) {
+                    tooClose = true;
+                    break;
+                }
             }
-            if (peaks.length >= (options.maxPeaks || 30)) break;
+            
+            if (!tooClose) {
+                peaks.push(candidate);
+            }
+            
+            // 限制峰值数量
+            if (peaks.length >= (options.maxPeaks || 20)) break;
         }
 
-        // 按索引升序返回
+        // 按索引重新排序
         peaks.sort((a, b) => a.index - b.index);
+        
+        console.log(`最终选择${peaks.length}个峰值`);
         return peaks;
+    }
+
+    // 计算峰值突出度
+    static calculateProminence(data, peakIndex) {
+        const peakValue = data[peakIndex];
+        let leftMin = peakValue;
+        let rightMin = peakValue;
+        
+        // 向左搜索最低点
+        for (let i = peakIndex - 1; i >= 0; i--) {
+            if (data[i] < leftMin) {
+                leftMin = data[i];
+            }
+            if (data[i] > peakValue) break; // 遇到更高峰值停止
+        }
+        
+        // 向右搜索最低点
+        for (let i = peakIndex + 1; i < data.length; i++) {
+            if (data[i] < rightMin) {
+                rightMin = data[i];
+            }
+            if (data[i] > peakValue) break; // 遇到更高峰值停止
+        }
+        
+        return {
+            value: peakValue - Math.max(leftMin, rightMin),
+            leftBase: leftMin,
+            rightBase: rightMin
+        };
     }
 }
 
