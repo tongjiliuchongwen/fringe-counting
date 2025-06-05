@@ -277,11 +277,7 @@ class PeakDetector {
             if (data[i] > peakValue) break; // 遇到更高峰值停止
         }
         
-        return {
-            value: peakValue - Math.max(leftMin, rightMin),
-            leftBase: leftMin,
-            rightBase: rightMin
-        };
+        return peakValue - Math.max(leftMin, rightMin);
     }
 }
 
