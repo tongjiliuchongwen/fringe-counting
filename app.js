@@ -102,13 +102,10 @@ videoPlayer.addEventListener('loadedmetadata', () => {
     processingCanvas.width = videoPlayer.videoWidth;
     processingCanvas.height = videoPlayer.videoHeight;
 
-    // IMPORTANT: Ensure clientWidth/Height are non-zero before calculating scale.
-    // This might happen if the video container is hidden or not yet rendered.
     if (drawingCanvas.clientWidth > 0 && drawingCanvas.clientHeight > 0) {
         scaleX = drawingCanvas.width / drawingCanvas.clientWidth;
         scaleY = drawingCanvas.height / drawingCanvas.clientHeight;
     } else {
-        // Fallback or wait for layout. For simplicity, using 1, but this might be an issue.
         console.warn("drawingCanvas clientWidth or clientHeight is 0. Scale factors might be incorrect.");
         scaleX = 1; 
         scaleY = 1;
@@ -136,8 +133,6 @@ videoPlayer.addEventListener('error', (e) => {
 drawingCanvas.addEventListener('mousedown', (e) => {
     if (!videoFile || currentMode === 'analyzing') return;
     isDrawing = true;
-    // const rect = drawingCanvas.getBoundingClientRect(); // No longer strictly needed for this calculation method
-    // Store starting point, scaled to canvas buffer coordinates using offsetX/Y
     currentDrawingStart.x = e.offsetX * scaleX;
     currentDrawingStart.y = e.offsetY * scaleY;
     
@@ -146,8 +141,6 @@ drawingCanvas.addEventListener('mousedown', (e) => {
 
 drawingCanvas.addEventListener('mousemove', (e) => {
     if (!isDrawing || !videoFile || currentMode === 'analyzing') return;
-    // const rect = drawingCanvas.getBoundingClientRect(); // No longer strictly needed
-    // Current mouse position, scaled using offsetX/Y
     const currentX = e.offsetX * scaleX;
     const currentY = e.offsetY * scaleY;
 
@@ -161,7 +154,6 @@ drawingCanvas.addEventListener('mousemove', (e) => {
 drawingCanvas.addEventListener('mouseup', (e) => {
     if (!isDrawing || !videoFile || currentMode === 'analyzing') return;
     isDrawing = false;
-    // const rect = drawingCanvas.getBoundingClientRect(); // No longer strictly needed
     const endX = e.offsetX * scaleX;
     const endY = e.offsetY * scaleY;
 
@@ -210,11 +202,10 @@ startAnalysisBtn.addEventListener('click', async () => {
     brightnessData = [];
     localMaximaFrames = [];
 
-    await analyzeVideoBrightnessAndOCR(); // New main analysis function
+    await analyzeVideoBrightnessAndOCR();
 });
 
 async function analyzeVideoBrightnessAndOCR() {
-    // 1. Analyze Brightness
     brightnessData = [];
     videoPlayer.currentTime = 0;
     const duration = videoPlayer.duration;
@@ -238,7 +229,6 @@ async function analyzeVideoBrightnessAndOCR() {
         });
 
         processingCtx.drawImage(videoPlayer, 0, 0, processingCanvas.width, processingCanvas.height);
-        // Use brightnessRect (already scaled) for getImageData
         const imageData = processingCtx.getImageData(brightnessRect.x, brightnessRect.y, brightnessRect.width, brightnessRect.height);
         const data = imageData.data;
         let totalBrightness = 0;
@@ -259,21 +249,20 @@ async function analyzeVideoBrightnessAndOCR() {
     console.log("Brightness Data collected:", brightnessData.length, "points");
     findLocalMaxima();
 
-    // 2. Process OCR for each local maximum using the single defined ocrRect
     if (localMaximaFrames.length > 0) {
         statusMessage.textContent = `找到 ${localMaximaFrames.length} 个亮度峰值。开始OCR处理...`;
         for (let i = 0; i < localMaximaFrames.length; i++) {
-            currentMaximaProcessingIndex = i; // For status updates in OCR logger
+            currentMaximaProcessingIndex = i; 
             const frameData = localMaximaFrames[i];
             statusMessage.textContent = `处理峰值 ${i + 1}/${localMaximaFrames.length} (时间: ${frameData.time.toFixed(2)}s)。跳转并准备OCR...`;
             
-            await new Promise(resolve => { // Seek to frame
+            await new Promise(resolve => { 
                 const onSeekedOCR = () => { videoPlayer.removeEventListener('seeked', onSeekedOCR); videoPlayer.pause(); resolve(); };
                 videoPlayer.addEventListener('seeked', onSeekedOCR);
                 videoPlayer.currentTime = frameData.time;
             });
             
-            await performOCR(frameData.time, i); // Pass index for results array
+            await performOCR(frameData.time, i); 
         }
         statusMessage.textContent = '所有亮度最大值帧处理完毕。正在生成结果...';
         displayResults();
@@ -281,14 +270,9 @@ async function analyzeVideoBrightnessAndOCR() {
         statusMessage.textContent = '未找到亮度局部最大值。请尝试调整亮度区域或使用不同视频。';
     }
 
-    // Reset for next run
     startAnalysisBtn.disabled = false;
     startAnalysisBtn.textContent = '开始完整分析';
-    currentMode = 'brightness'; // Reset to allow new brightness rect definition
-    // Keep brightnessRect and ocrRect defined for convenience if user wants to re-run on same regions,
-    // or clear them if a full reset is desired:
-    // brightnessRect = null; ocrRect = null; clearAndRedrawRects();
-    // For now, let's keep them. User can redraw if needed.
+    currentMode = 'brightness'; 
 }
 
 function findLocalMaxima() {
@@ -304,7 +288,7 @@ function findLocalMaxima() {
 }
 
 async function performOCR(frameTimeAtMaxBrightness, occurrenceIdx) {
-    if (!ocrRect || !ocrWorker) { // ocrRect is now global
+    if (!ocrRect || !ocrWorker) { 
         statusMessage.textContent = 'OCR 区域未定义或 OCR 服务未就绪。';
         analysisResults.push({
             occurrenceIndex: occurrenceIdx + 1,
@@ -314,22 +298,60 @@ async function performOCR(frameTimeAtMaxBrightness, occurrenceIdx) {
         return;
     }
     
-    // Ensure video is at the correct frame (already done before calling performOCR in new flow)
-    // processingCtx is already updated with the correct frame image
     processingCtx.drawImage(videoPlayer, 0, 0, processingCanvas.width, processingCanvas.height);
 
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = ocrRect.width;   // Use scaled width/height from global ocrRect
+    tempCanvas.width = ocrRect.width;   
     tempCanvas.height = ocrRect.height;
     const tempCtx = tempCanvas.getContext('2d');
-    // Draw the selected portion (using scaled ocrRect coordinates) from processingCanvas to tempCanvas
     tempCtx.drawImage(processingCanvas, ocrRect.x, ocrRect.y, ocrRect.width, ocrRect.height, 0, 0, ocrRect.width, ocrRect.height);
 
-    // Status update is now handled by Tesseract logger or before calling performOCR
+    // --- START OCR DEBUGGING & PREPROCESSING ---
+    // 1. Preprocessing: Grayscale and Binarization
+    const ocrImageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+    const ocrData = ocrImageData.data;
+    const threshold = 128; // ADJUST THIS THRESHOLD AS NEEDED (0-255)
+    for (let i = 0; i < ocrData.length; i += 4) {
+        const avg = (ocrData[i] + ocrData[i + 1] + ocrData[i + 2]) / 3;
+        const color = avg > threshold ? 255 : 0; 
+        ocrData[i] = color; ocrData[i + 1] = color; ocrData[i + 2] = color;
+    }
+    tempCtx.putImageData(ocrImageData, 0, 0);
+
+    // 2. Display the tempCanvas (image sent to Tesseract) for debugging
+    let debugCanvas = document.getElementById('debugOcrCanvas');
+    if (!debugCanvas) {
+        debugCanvas = document.createElement('canvas');
+        debugCanvas.id = 'debugOcrCanvas';
+        document.body.appendChild(debugCanvas);
+        debugCanvas.style.border = "3px solid red";
+        debugCanvas.style.position = "fixed";
+        debugCanvas.style.top = "10px";
+        debugCanvas.style.right = "10px";
+        debugCanvas.style.zIndex = "10000"; 
+        debugCanvas.style.backgroundColor = "lightgray"; 
+    }
+    debugCanvas.width = tempCanvas.width;
+    debugCanvas.height = tempCanvas.height;
+    debugCanvas.getContext('2d').drawImage(tempCanvas, 0, 0);
+    // --- END OCR DEBUGGING & PREPROCESSING ---
+
     try {
-        await ocrWorker.setParameters({ tessedit_char_whitelist: '0123456789.' });
-        const { data: { text } } = await ocrWorker.recognize(tempCanvas);
-        console.log(`OCR Result for frame at ${frameTimeAtMaxBrightness.toFixed(2)}s (Occurrence ${occurrenceIdx+1}): "${text.trim()}"`);
+        // Tesseract Page Segmentation Mode (PSM)
+        // Common values:
+        // 6: Assume a single uniform block of text.
+        // 7: Treat the image as a single text line. (GOOD STARTING POINT)
+        // 8: Treat the image as a single word.
+        // 10: Treat the image as a single character.
+        // 13: Raw line. Treat the image as a single text line, bypassing Tesseract-specific hacks.
+        const psmValue = '7'; // MODIFY THIS VALUE TO TEST DIFFERENT PSMs (e.g., '6', '8', '10', '13')
+
+        await ocrWorker.setParameters({
+            tessedit_char_whitelist: '0123456789.',
+            tessedit_pageseg_mode: psmValue, 
+        });
+        const { data: { text } } = await ocrWorker.recognize(tempCanvas); // Use the preprocessed tempCanvas
+        console.log(`PSM: ${psmValue} | OCR @ ${frameTimeAtMaxBrightness.toFixed(2)}s (Occ ${occurrenceIdx+1}): "${text.trim()}"`);
         
         const numberMatch = text.trim().match(/(\d+(\.\d{1,2})?)/);
         let ocrValue = NaN;
@@ -358,7 +380,7 @@ function displayResults() {
     if (analysisResults.length === 0) {
         tableHTML += '<tr><td colspan="3">没有可显示的结果。</td></tr>';
     } else {
-        analysisResults.sort((a,b) => a.occurrenceIndex - b.occurrenceIndex).forEach(result => { // Ensure sorted by occurrence
+        analysisResults.sort((a,b) => a.occurrenceIndex - b.occurrenceIndex).forEach(result => { 
             tableHTML += `<tr><td>${result.occurrenceIndex}</td><td>${result.frameTime.toFixed(2)}</td><td>${isNaN(result.value) ? 'N/A (识别失败)' : result.value.toFixed(2)}</td></tr>`;
         });
     }
@@ -389,7 +411,7 @@ function displayResults() {
                         label: function(context) {
                             let label = context.dataset.label || '';
                             if (label) label += ': ';
-                            const pointData = analysisResults.find(r => r.occurrenceIndex === context.parsed.x); // Find by occurrence index
+                            const pointData = analysisResults.find(r => r.occurrenceIndex === context.parsed.x); 
                             if (pointData && context.parsed.y !== null) {
                                 label += `数字: ${context.parsed.y.toFixed(2)} (帧时间: ${pointData.frameTime.toFixed(2)}s)`;
                             } else if (pointData) {
