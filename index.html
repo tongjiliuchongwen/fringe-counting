@@ -52,11 +52,12 @@
                 </label>
             </div>
             
-            <div class="video-container">
-                <video id="videoPlayer" controls style="display: none;">
+            <!-- 🔥 修复后的视频容器 -->
+            <div class="video-container" id="videoContainer">
+                <video id="videoPlayer" controls style="display: none; position: relative; max-width: 100%; height: auto;">
                     您的浏览器不支持视频播放。
                 </video>
-                <canvas id="drawingCanvas" style="display: none;"></canvas>
+                <canvas id="drawingCanvas" style="display: none; position: absolute; top: 0; left: 0; pointer-events: auto; z-index: 10; border: 2px solid transparent;"></canvas>
                 <canvas id="processingCanvas" style="display: none;"></canvas>
             </div>
         </div>
@@ -260,6 +261,7 @@
                         <li>建议使用Chrome或Firefox浏览器以获得最佳性能</li>
                         <li>OCR区域应尽量包含完整的数字，避免过大或过小</li>
                         <li>亮度分析区域应选择条纹变化明显的部位</li>
+                        <li><strong>🎯 绘制提示：在视频上直接拖拽鼠标即可绘制区域</strong></li>
                     </ul>
                 </div>
             </details>
@@ -288,6 +290,41 @@
     <script src="app.js"></script>
 
     <style>
+        /* 🔥 关键修复样式 */
+        .video-container {
+            position: relative;
+            display: inline-block;
+            margin: 20px 0;
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            background: #f9f9f9;
+            min-height: 200px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .video-container.has-video {
+            border-color: #28a745;
+            background: #f8fff9;
+        }
+
+        #videoPlayer {
+            max-width: 100%;
+            max-height: 70vh;
+            border-radius: 6px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+
+        #drawingCanvas {
+            cursor: crosshair;
+            transition: border-color 0.3s ease;
+        }
+
+        #drawingCanvas:hover {
+            border-color: #007bff !important;
+        }
+
         /* PaddleOCR增强样式 */
         .ocr-engine-section {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -470,7 +507,7 @@
             font-weight: bold;
         }
 
-        /* 响应式设计 */
+        /* 📱 响应式设计 */
         @media (max-width: 768px) {
             .control-group {
                 flex-direction: column;
@@ -487,6 +524,97 @@
                 align-items: flex-start;
                 gap: 5px;
             }
+
+            .video-container {
+                padding: 5px;
+            }
+
+            #videoPlayer {
+                max-height: 50vh;
+            }
+        }
+
+        /* 🎨 额外增强样式 */
+        .upload-area {
+            margin-bottom: 20px;
+        }
+
+        .upload-label {
+            display: inline-block;
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .upload-label:hover {
+            background: linear-gradient(135deg, #45a049, #4CAF50);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+        }
+
+        .upload-label small {
+            display: block;
+            margin-top: 5px;
+            font-size: 0.8em;
+            opacity: 0.9;
+        }
+
+        #videoUpload {
+            display: none;
+        }
+
+        .status-message {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            font-weight: 500;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #f0f0f0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 15px 0;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #45a049);
+            border-radius: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            transition: width 0.3s ease;
+        }
+
+        .debug-section {
+            margin: 15px 0;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 10px;
+            background: #f9f9f9;
+        }
+
+        .debug-info {
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            border-left: 4px solid #607d8b;
+            margin-top: 10px;
         }
     </style>
 </body>
