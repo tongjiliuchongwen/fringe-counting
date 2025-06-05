@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <title>视频分析工具 - 智能增强版</title>
+    <title>视频分析工具 - 智能增强版 (PaddleOCR)</title>
     <style>
         body {
             font-family: sans-serif;
@@ -130,6 +130,21 @@
             background-color: #ffc107;
             color: #000;
         }
+        .ocr-engine-selector {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .ocr-engine-selector label {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .ocr-engine-selector select {
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
         #analysisSettings {
             background-color: #e9ecef;
             padding: 10px;
@@ -230,15 +245,43 @@
             margin-top: 10px;
             font-size: 11px;
         }
+        .engine-status {
+            font-size: 12px;
+            margin-top: 5px;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .engine-status.paddle {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .engine-status.tesseract {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .engine-status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
     </style>
 </head>
 <body>
-    <h1>视频分析工具 - 智能增强版</h1>
+    <h1>视频分析工具 - 智能增强版 (PaddleOCR集成)</h1>
 
     <div class="main-container">
         <div class="left-panel">
             <div id="controls">
                 <input type="file" id="videoUpload" accept="video/*"><br>
+                
+                <!-- OCR引擎选择 -->
+                <div class="ocr-engine-selector">
+                    <label for="ocrEngine">OCR引擎:</label>
+                    <select id="ocrEngine">
+                        <option value="paddle">PaddleOCR (推荐，小数点识别更准确)</option>
+                        <option value="tesseract">Tesseract (备选)</option>
+                    </select>
+                    <div id="engineStatus" class="engine-status">初始化中...</div>
+                </div>
                 
                 <div id="analysisSettings" style="display: none;">
                     <h4>分析设置</h4>
@@ -268,7 +311,7 @@
                 <button id="startAnalysisBtn" disabled>开始智能分析</button>
                 <button id="refreshPreviewBtn">刷新预览</button>
                 <button id="testOcrBtn" disabled>测试当前OCR</button>
-                <p id="statusMessage">请先上传视频。</p>
+                <p id="statusMessage">正在初始化OCR引擎...</p>
                 <div class="progress-bar" id="progressBar" style="display: none;">
                     <div class="progress-fill" id="progressFill" style="width: 0%;">0%</div>
                 </div>
@@ -333,10 +376,21 @@
         </div>
     </div>
 
+    <!-- PaddleOCR 依赖 (优先加载) -->
+    <script src="https://cdn.jsdelivr.net/npm/@paddlejs/paddlejs-core@latest/dist/paddle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@paddlejs/paddlejs-backend-webgl@latest/dist/paddle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@paddlejs-models/ocr@latest/dist/index.min.js"></script>
+    
+    <!-- Tesseract 备选 -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    
+    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="enhanced-ocr.js"></script>
+    
+    <!-- 应用脚本 -->
     <script src="signal-processor.js"></script>
+    <script src="enhanced-ocr.js"></script>
+    <script src="paddle-ocr.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
