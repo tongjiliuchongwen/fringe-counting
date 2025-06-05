@@ -97,19 +97,26 @@ videoUpload.addEventListener('change', (event) => {
 
 videoPlayer.addEventListener('loadedmetadata', () => {
     console.log("Video metadata loaded:", videoPlayer.videoWidth, videoPlayer.videoHeight);
-    // Set canvas buffer size to actual video dimensions
     drawingCanvas.width = videoPlayer.videoWidth;
     drawingCanvas.height = videoPlayer.videoHeight;
-    // Processing canvas also
     processingCanvas.width = videoPlayer.videoWidth;
     processingCanvas.height = videoPlayer.videoHeight;
 
-    // Calculate scaling factors based on displayed size vs internal buffer size
-    // clientWidth/Height are the displayed dimensions on the page (CSS size)
-    scaleX = drawingCanvas.width / drawingCanvas.clientWidth;
-    scaleY = drawingCanvas.height / drawingCanvas.clientHeight;
+    // IMPORTANT: Ensure clientWidth/Height are non-zero before calculating scale.
+    // This might happen if the video container is hidden or not yet rendered.
+    if (drawingCanvas.clientWidth > 0 && drawingCanvas.clientHeight > 0) {
+        scaleX = drawingCanvas.width / drawingCanvas.clientWidth;
+        scaleY = drawingCanvas.height / drawingCanvas.clientHeight;
+    } else {
+        // Fallback or wait for layout. For simplicity, using 1, but this might be an issue.
+        console.warn("drawingCanvas clientWidth or clientHeight is 0. Scale factors might be incorrect.");
+        scaleX = 1; 
+        scaleY = 1;
+    }
 
     console.log(`Canvas scaling factors: scaleX=${scaleX}, scaleY=${scaleY}`);
+    console.log(`Canvas buffer: ${drawingCanvas.width}x${drawingCanvas.height}, Display: ${drawingCanvas.clientWidth}x${drawingCanvas.clientHeight}`);
+
 
     statusMessage.textContent = '视频已加载。请在视频上绘制亮度分析区域。';
     currentMode = 'brightness';
@@ -118,6 +125,7 @@ videoPlayer.addEventListener('loadedmetadata', () => {
     startAnalysisBtn.disabled = true;
     clearAndRedrawRects();
 });
+
 
 videoPlayer.addEventListener('error', (e) => {
     console.error("Video Error:", e);
@@ -128,25 +136,23 @@ videoPlayer.addEventListener('error', (e) => {
 drawingCanvas.addEventListener('mousedown', (e) => {
     if (!videoFile || currentMode === 'analyzing') return;
     isDrawing = true;
-    const rect = drawingCanvas.getBoundingClientRect();
-    // Store starting point, scaled to canvas buffer coordinates
-    currentDrawingStart.x = (e.clientX - rect.left) * scaleX;
-    currentDrawingStart.y = (e.clientY - rect.top) * scaleY;
+    // const rect = drawingCanvas.getBoundingClientRect(); // No longer strictly needed for this calculation method
+    // Store starting point, scaled to canvas buffer coordinates using offsetX/Y
+    currentDrawingStart.x = e.offsetX * scaleX;
+    currentDrawingStart.y = e.offsetY * scaleY;
     
-    // Clear previous temporary drawing for live feedback, but keep defined rects
     clearAndRedrawRects();
 });
 
 drawingCanvas.addEventListener('mousemove', (e) => {
     if (!isDrawing || !videoFile || currentMode === 'analyzing') return;
-    const rect = drawingCanvas.getBoundingClientRect();
-    // Current mouse position, scaled
-    const currentX = (e.clientX - rect.left) * scaleX;
-    const currentY = (e.clientY - rect.top) * scaleY;
+    // const rect = drawingCanvas.getBoundingClientRect(); // No longer strictly needed
+    // Current mouse position, scaled using offsetX/Y
+    const currentX = e.offsetX * scaleX;
+    const currentY = e.offsetY * scaleY;
 
-    clearAndRedrawRects(); // Redraw defined rects first
+    clearAndRedrawRects(); 
 
-    // Draw live feedback rectangle (scaled coordinates)
     drawingCtx.strokeStyle = (currentMode === 'brightness') ? 'rgba(255,0,0,0.5)' : 'rgba(0,0,255,0.5)';
     drawingCtx.lineWidth = 1;
     drawingCtx.strokeRect(currentDrawingStart.x, currentDrawingStart.y, currentX - currentDrawingStart.x, currentY - currentDrawingStart.y);
@@ -155,11 +161,11 @@ drawingCanvas.addEventListener('mousemove', (e) => {
 drawingCanvas.addEventListener('mouseup', (e) => {
     if (!isDrawing || !videoFile || currentMode === 'analyzing') return;
     isDrawing = false;
-    const rect = drawingCanvas.getBoundingClientRect();
-    const endX = (e.clientX - rect.left) * scaleX;
-    const endY = (e.clientY - rect.top) * scaleY;
+    // const rect = drawingCanvas.getBoundingClientRect(); // No longer strictly needed
+    const endX = e.offsetX * scaleX;
+    const endY = e.offsetY * scaleY;
 
-    const drawnRect = { // Coordinates are already scaled for canvas buffer
+    const drawnRect = { 
         x: Math.min(currentDrawingStart.x, endX),
         y: Math.min(currentDrawingStart.y, endY),
         width: Math.abs(endX - currentDrawingStart.x),
@@ -168,7 +174,7 @@ drawingCanvas.addEventListener('mouseup', (e) => {
 
     if (drawnRect.width < 5 || drawnRect.height < 5) {
         console.log("Drawn rectangle too small.");
-        clearAndRedrawRects(); // Clear the small attempt and redraw existing
+        clearAndRedrawRects(); 
         return;
     }
 
@@ -177,15 +183,15 @@ drawingCanvas.addEventListener('mouseup', (e) => {
         console.log("Brightness Rect (scaled for processing):", brightnessRect);
         currentMode = 'ocr_define';
         statusMessage.textContent = `亮度区域已定义。现在请绘制数字识别区域 (此区域将用于所有峰值帧)。`;
-        startAnalysisBtn.disabled = true; // Keep disabled until OCR rect is also defined
+        startAnalysisBtn.disabled = true; 
     } else if (currentMode === 'ocr_define') {
         ocrRect = drawnRect;
         console.log("OCR Rect (scaled for processing):", ocrRect);
-        currentMode = 'ready_to_analyze'; // Both rects are now defined
+        currentMode = 'ready_to_analyze'; 
         statusMessage.textContent = `数字识别区域已定义。点击 "开始完整分析" 按钮。`;
-        startAnalysisBtn.disabled = false; // Enable analysis button
+        startAnalysisBtn.disabled = false; 
     }
-    clearAndRedrawRects(); // Redraw with the newly defined rect
+    clearAndRedrawRects(); 
 });
 
 startAnalysisBtn.addEventListener('click', async () => {
