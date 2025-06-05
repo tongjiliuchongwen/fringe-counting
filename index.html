@@ -1,621 +1,342 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>智能条纹计数分析工具 - PaddleOCR增强版</title>
-    <link rel="stylesheet" href="style.css"> <!-- 注意：如果style.css文件确实不存在且内联样式已足够，可以移除此行或创建一个空的style.css文件以避免404 -->
-    
-    <!-- PaddleOCR依赖库 -->
-    <script src="https://cdn.jsdelivr.net/npm/@paddlejs/paddlejs-core@latest/dist/paddle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@paddlejs/paddlejs-backend-webgl@latest/dist/paddle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@paddlejs-models/ocr@latest/dist/index.min.js"></script>
-    
-    <!-- Tesseract备选方案 -->
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-    
-    <!-- Chart.js图表库 -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>🔬 智能条纹计数分析工具</h1>
-            <p>支持PaddleOCR高精度小数点识别 | 版本: v2.0-PaddleOCR集成版</p>
-        </header>
-
-        <!-- OCR引擎选择器 -->
-        <div class="ocr-engine-section">
-            <div class="control-group">
-                <label for="ocrEngine">🤖 OCR引擎:</label>
-                <select id="ocrEngine">
-                    <option value="paddle">🚀 PaddleOCR (推荐 - 小数点优化)</option>
-                    <option value="tesseract">🔍 Tesseract (备选)</option>
-                </select>
-                <span id="ocrEngineStatus" class="status-indicator">初始化中...</span>
-            </div>
-            <div class="engine-info">
-                <small>
-                    💡 <strong>PaddleOCR:</strong> 专为数字和小数点识别优化，支持GPU加速<br>
-                    🔧 <strong>Tesseract:</strong> 传统OCR引擎，兼容性更好
-                </small>
-            </div>
-        </div>
-
-        <!-- 视频上传区域 -->
-        <div class="video-section">
-            <div class="upload-area">
-                <input type="file" id="videoUpload" accept="video/*">
-                <label for="videoUpload" class="upload-label">
-                    📹 选择视频文件
-                    <small>支持 MP4, AVI, MOV 等格式</small>
-                </label>
-            </div>
-            
-            <!-- 🔥 修复后的视频容器 -->
-            <div class="video-container" id="videoContainer">
-                <video id="videoPlayer" controls style="display: none; position: relative; max-width: 100%; height: auto;">
-                    您的浏览器不支持视频播放。
-                </video>
-                <canvas id="drawingCanvas" style="display: none; position: absolute; top: 0; left: 0; pointer-events: auto; z-index: 10; border: 2px solid transparent;"></canvas>
-                <canvas id="processingCanvas" style="display: none;"></canvas>
-            </div>
-        </div>
-
-        <!-- 分析设置 -->
-        <div id="analysisSettings" class="settings-section" style="display: none;">
-            <h3>🎛️ 分析参数设置</h3>
-            <div class="settings-grid">
-                <div class="setting-group">
-                    <label for="samplingStrategy">采样策略:</label>
-                    <select id="samplingStrategy">
-                        <option value="auto">自动 (推荐)</option>
-                        <option value="high">高密度 (30fps)</option>
-                        <option value="medium">中等 (20fps)</option>
-                        <option value="low">低密度 (15fps)</option>
-                    </select>
-                </div>
-                
-                <div class="setting-group">
-                    <label for="filterStrength">信号滤波:</label>
-                    <select id="filterStrength">
-                        <option value="light">轻度</option>
-                        <option value="medium" selected>中等</option>
-                        <option value="strong">强烈</option>
-                    </select>
-                </div>
-                
-                <div class="setting-group">
-                    <label for="peakSensitivity">峰值敏感度:</label>
-                    <select id="peakSensitivity">
-                        <option value="low">低 (精确)</option>
-                        <option value="medium" selected>中等</option>
-                        <option value="high">高 (敏感)</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-
-        <!-- 预览区域 -->
-        <div class="preview-section">
-            <h3>🔍 实时预览</h3>
-            <div class="preview-grid">
-                <!-- 亮度分析预览 -->
-                <div class="preview-item">
-                    <h4>📊 亮度分析区域</h4>
-                    <canvas id="brightnessPreviewCanvas" width="200" height="150"></canvas>
-                    <div id="brightnessPreviewInfo" class="preview-info">
-                        请先绘制亮度分析区域
-                    </div>
-                </div>
-                
-                <!-- OCR区域预览 -->
-                <div class="preview-item">
-                    <h4>🔤 OCR识别区域</h4>
-                    <canvas id="ocrPreviewCanvas" width="200" height="150"></canvas>
-                    <div id="ocrPreviewInfo" class="preview-info">
-                        请先绘制OCR识别区域
-                    </div>
-                </div>
-                
-                <!-- OCR预处理预览 -->
-                <div class="preview-item">
-                    <h4>⚙️ OCR预处理</h4>
-                    <canvas id="ocrProcessedPreviewCanvas" width="200" height="150"></canvas>
-                    <div id="ocrProcessedPreviewInfo" class="preview-info">
-                        请先绘制OCR识别区域
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 控制按钮 -->
-        <div class="controls-section">
-            <div class="button-group">
-                <button id="refreshPreviewBtn" class="btn btn-secondary">
-                    🔄 刷新预览
-                </button>
-                <button id="testOcrBtn" class="btn btn-warning" disabled>
-                    🧪 测试OCR
-                </button>
-                <button id="startAnalysisBtn" class="btn btn-primary" disabled>
-                    🚀 开始智能分析
-                </button>
-            </div>
-        </div>
-
-        <!-- 进度条 -->
-        <div id="progressBar" class="progress-bar" style="display: none;">
-            <div id="progressFill" class="progress-fill">0%</div>
-        </div>
-
-        <!-- 状态信息 -->
-        <div class="status-section">
-            <div id="statusMessage" class="status-message">
-                欢迎使用智能条纹计数分析工具！请上传视频文件开始分析。
-            </div>
-            
-            <!-- 调试信息 -->
-            <details class="debug-section">
-                <summary>🐛 调试信息</summary>
-                <div id="debugInfo" class="debug-info">
-                    等待视频加载...
-                </div>
-            </details>
-        </div>
-
-        <!-- OCR测试结果 -->
-        <div id="ocrTestResult" class="test-result" style="display: none;">
-            <!-- 动态生成OCR测试结果 -->
-        </div>
-
-        <!-- 策略预览 -->
-        <div class="strategy-previews-section">
-            <h4>🎯 处理策略预览</h4>
-            <div id="strategyPreviews" class="strategy-previews">
-                <!-- 动态生成策略预览 -->
-            </div>
-            <small class="help-text">💡 点击策略预览可查看详细处理过程</small>
-        </div>
-
-        <!-- 分析统计 -->
-        <div id="analysisStats" class="analysis-stats" style="display: none;">
-            <!-- 动态生成分析统计信息 -->
-        </div>
-
-        <!-- 图表区域 -->
-        <div class="charts-section">
-            <div class="chart-container">
-                <h3>📈 亮度分析曲线</h3>
-                <canvas id="brightnessChart" width="800" height="400"></canvas>
-            </div>
-            
-            <div class="chart-container">
-                <h3>📊 识别结果图表</h3>
-                <canvas id="resultsChart" width="800" height="400"></canvas>
-            </div>
-        </div>
-
-        <!-- 结果表格 -->
-        <div class="results-section">
-            <h3>📋 详细结果</h3>
-            <div id="resultsTableContainer" class="results-table">
-                <!-- 动态生成结果表格 -->
-            </div>
-        </div>
-
-        <!-- 帮助信息 -->
-        <div class="help-section">
-            <details>
-                <summary>❓ 使用帮助</summary>
-                <div class="help-content">
-                    <h4>🚀 快速开始：</h4>
-                    <ol>
-                        <li><strong>选择OCR引擎：</strong>推荐使用PaddleOCR以获得更好的小数点识别效果</li>
-                        <li><strong>上传视频：</strong>支持MP4、AVI、MOV等常见格式</li>
-                        <li><strong>绘制亮度区域：</strong>在视频上拖拽绘制红色矩形，选择亮度变化明显的区域</li>
-                        <li><strong>绘制OCR区域：</strong>继续绘制蓝色/绿色矩形，选择数字显示区域</li>
-                        <li><strong>测试OCR：</strong>可选步骤，验证OCR识别效果</li>
-                        <li><strong>开始分析：</strong>执行完整的智能分析流程</li>
-                    </ol>
-                    
-                    <h4>🎛️ 参数说明：</h4>
-                    <ul>
-                        <li><strong>采样策略：</strong>控制分析密度，自动模式根据视频长度智能调整</li>
-                        <li><strong>信号滤波：</strong>平滑亮度曲线，减少噪声影响</li>
-                        <li><strong>峰值敏感度：</strong>调整峰值检测的严格程度</li>
-                    </ul>
-                    
-                    <h4>🔧 OCR引擎对比：</h4>
-                    <table class="help-table">
-                        <tr>
-                            <th>特性</th>
-                            <th>PaddleOCR</th>
-                            <th>Tesseract</th>
-                        </tr>
-                        <tr>
-                            <td>小数点识别</td>
-                            <td>✅ 优秀</td>
-                            <td>⚠️ 一般</td>
-                        </tr>
-                        <tr>
-                            <td>数字识别</td>
-                            <td>✅ 优秀</td>
-                            <td>✅ 良好</td>
-                        </tr>
-                        <tr>
-                            <td>处理速度</td>
-                            <td>🚀 快速</td>
-                            <td>🐌 较慢</td>
-                        </tr>
-                        <tr>
-                            <td>兼容性</td>
-                            <td>📱 现代浏览器</td>
-                            <td>🌐 广泛兼容</td>
-                        </tr>
-                    </table>
-                    
-                    <h4>⚠️ 注意事项：</h4>
-                    <ul>
-                        <li>首次使用PaddleOCR可能需要较长的模型加载时间</li>
-                        <li>建议使用Chrome或Firefox浏览器以获得最佳性能</li>
-                        <li>OCR区域应尽量包含完整的数字，避免过大或过小</li>
-                        <li>亮度分析区域应选择条纹变化明显的部位</li>
-                        <li><strong>🎯 绘制提示：在视频上直接拖拽鼠标即可绘制区域</strong></li>
-                    </ul>
-                </div>
-            </details>
-        </div>
-
-        <!-- 页脚 -->
-        <footer class="footer">
-            <p>
-                🔬 智能条纹计数分析工具 v2.0 | 
-                🚀 集成PaddleOCR小数点识别优化 | 
-                👨‍💻 开发者: tongjiliuchongwen
-            </p>
-            <p>
-                <small>
-                    支持的技术：PaddleOCR, Tesseract.js, Chart.js, HTML5 Canvas
-                </small>
-            </p>
-        </footer>
-    </div>
-
-    <!-- 脚本文件 -->
-    <script src="signal-processor.js"></script>
-    <!-- <script src="peak-detector.js"></script> --> <!-- 已注释掉，因为此文件缺失且app.js中已有findLocalMaxima实现 -->
-    <script src="enhanced-ocr.js"></script>
-    <script src="paddle-ocr.js"></script>
-    <script src="app.js"></script>
-
+    <title>视频分析工具 - 智能增强版</title>
     <style>
-        /* 🔥 关键修复样式 */
-        .video-container {
-            position: relative;
-            display: inline-block;
-            margin: 20px 0;
-            border: 2px dashed #ddd;
-            border-radius: 8px;
-            padding: 10px;
-            background: #f9f9f9;
-            min-height: 200px;
-            width: 100%;
-            text-align: center;
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
         }
-
-        .video-container.has-video {
-            border-color: #28a745;
-            background: #f8fff9;
-        }
-
-        #videoPlayer {
-            max-width: 100%;
-            max-height: 70vh;
-            border-radius: 6px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        }
-
-        #drawingCanvas {
-            cursor: crosshair;
-            transition: border-color 0.3s ease;
-        }
-
-        #drawingCanvas:hover {
-            border-color: #007bff !important;
-        }
-
-        /* PaddleOCR增强样式 */
-        .ocr-engine-section {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-        }
-
-        .control-group {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            margin-bottom: 10px;
-        }
-
-        .control-group label {
-            font-weight: bold;
-            min-width: 100px;
-        }
-
-        .control-group select {
-            flex: 1;
-            max-width: 300px;
-            padding: 8px 12px;
-            border: none;
-            border-radius: 6px;
-            background: white;
+        h1, h2, h3 {
             color: #333;
         }
-
-        .status-indicator {
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 0.9em;
-            font-weight: bold;
-        }
-
-        .status-indicator.loading {
-            background: #ffc107;
-            color: #856404;
-        }
-
-        .status-indicator.ready.paddle {
-            background: #28a745;
-            color: white;
-        }
-
-        .status-indicator.ready.tesseract {
-            background: #007bff;
-            color: white;
-        }
-
-        .status-indicator.error {
-            background: #dc3545;
-            color: white;
-        }
-
-        .engine-info {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 10px;
-            border-radius: 6px;
-            margin-top: 10px;
-        }
-
-        .ocr-result-header {
-            padding: 10px;
-            border-radius: 6px 6px 0 0;
-            font-weight: bold;
-        }
-
-        .ocr-result-header.paddle {
-            background: #28a745;
-            color: white;
-        }
-
-        .ocr-result-header.tesseract {
-            background: #007bff;
-            color: white;
-        }
-
-        .ocr-result-details {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 0 0 6px 6px;
-        }
-
-        .result-row {
+        .main-container {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 5px 0;
-            border-bottom: 1px solid #e9ecef;
+            gap: 20px;
+            align-items: flex-start;
         }
-
-        .result-row:last-child {
-            border-bottom: none;
+        .left-panel {
+            flex: 1;
         }
-
-        .result-row .label {
-            font-weight: bold;
-            color: #495057;
+        .right-panel {
+            width: 350px;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 20px;
+            max-height: 90vh;
+            overflow-y: auto;
         }
-
-        .result-row .value {
-            font-family: 'Courier New', monospace;
-        }
-
-        .value.success {
-            color: #28a745;
-            font-weight: bold;
-        }
-
-        .value.error {
-            color: #dc3545;
-            font-style: italic;
-        }
-
-        .value.neutral {
-            color: #6c757d;
-        }
-
-        .confidence-high {
-            color: #28a745;
-            font-weight: bold;
-        }
-
-        .confidence-medium {
-            color: #ffc107;
-            font-weight: bold;
-        }
-
-        .confidence-low {
-            color: #dc3545;
-            font-weight: bold;
-        }
-
-        .engine-badge {
+        #videoContainer {
+            position: relative;
             display: inline-block;
-            padding: 5px 10px;
-            border-radius: 15px;
-            font-size: 0.8em;
-            font-weight: bold;
-            margin-top: 10px;
+            margin-bottom: 10px;
+            border: 2px solid #ccc;
         }
-
-        .engine-badge.paddle {
-            background: #28a745;
-            color: white;
+        #videoPlayer {
+            display: block;
+            max-width: 800px;
+            height: auto;
         }
-
-        .engine-badge.tesseract {
-            background: #007bff;
-            color: white;
+        #drawingCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+            cursor: crosshair;
+            pointer-events: auto;
         }
-
-        .tip {
-            background: #e3f2fd;
-            padding: 10px;
-            border-radius: 6px;
-            margin-top: 10px;
-            border-left: 4px solid #2196f3;
-        }
-
-        .help-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 10px 0;
-        }
-
-        .help-table th,
-        .help-table td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: center;
-        }
-
-        .help-table th {
-            background: #f8f9fa;
-            font-weight: bold;
-        }
-
-        /* 📱 响应式设计 */
-        @media (max-width: 768px) {
-            .control-group {
-                flex-direction: column;
-                align-items: stretch;
-            }
-
-            .control-group label {
-                min-width: auto;
-                margin-bottom: 5px;
-            }
-
-            .result-row {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 5px;
-            }
-
-            .video-container {
-                padding: 5px;
-            }
-
-            #videoPlayer {
-                max-height: 50vh;
-            }
-        }
-
-        /* 🎨 额外增强样式 */
-        .upload-area {
+        .preview-container {
             margin-bottom: 20px;
         }
-
-        .upload-label {
-            display: inline-block;
-            padding: 15px 30px;
-            background: linear-gradient(135deg, #4CAF50, #45a049);
-            color: white;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            text-align: center;
+        .preview-item {
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .preview-header {
+            background-color: #f8f9fa;
+            padding: 8px 12px;
             font-weight: bold;
+            font-size: 14px;
         }
-
-        .upload-label:hover {
-            background: linear-gradient(135deg, #45a049, #4CAF50);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+        .preview-content {
+            padding: 10px;
+            text-align: center;
         }
-
-        .upload-label small {
-            display: block;
-            margin-top: 5px;
-            font-size: 0.8em;
-            opacity: 0.9;
+        .preview-canvas {
+            border: 1px solid #ccc;
+            max-width: 100%;
+            height: auto;
+            background: #fff;
         }
-
-        #videoUpload {
-            display: none;
+        .preview-info {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #666;
         }
-
-        .status-message {
+        .strategy-previews {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 10px;
+        }
+        .strategy-preview {
+            width: 60px;
+            height: 40px;
+            border: 1px solid #ddd;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .strategy-preview:hover {
+            transform: scale(1.1);
+            border-color: #007bff;
+        }
+        .strategy-info {
+            font-size: 10px;
+            text-align: center;
+            margin-top: 2px;
+        }
+        #controls, #results {
+            margin-top: 20px;
             padding: 15px;
-            border-radius: 8px;
-            margin: 10px 0;
-            background: #e3f2fd;
-            border-left: 4px solid #2196f3;
-            font-weight: 500;
+            background-color: #fff;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-
+        #controls button {
+            padding: 8px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 5px;
+        }
+        #controls button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #refreshPreviewBtn {
+            background-color: #28a745;
+        }
+        #testOcrBtn {
+            background-color: #ffc107;
+            color: #000;
+        }
+        #analysisSettings {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        #analysisSettings label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        #analysisSettings select, #analysisSettings input {
+            width: 100%;
+            padding: 4px;
+            margin-bottom: 8px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        #controls input[type="file"] {
+            padding: 5px;
+            margin-bottom: 10px;
+        }
+        #statusMessage {
+            font-style: italic;
+            color: #555;
+            margin-top: 10px;
+        }
+        #resultsTableContainer table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+        #resultsTableContainer th, #resultsTableContainer td {
+            border: 1px solid #ddd;
+            padding: 6px;
+            text-align: left;
+        }
+        #resultsTableContainer th {
+            background-color: #f0f0f0;
+        }
+        #chartContainer {
+            width: 100%;
+            max-width: 800px;
+            height: 400px;
+            margin-top: 20px;
+        }
+        #brightnessChartContainer {
+            width: 100%;
+            max-width: 800px;
+            height: 300px;
+            margin-top: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        #debugInfo {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        .ocr-test-result {
+            margin-top: 10px;
+            padding: 8px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 11px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
         .progress-bar {
             width: 100%;
-            height: 30px;
-            background: #f0f0f0;
-            border-radius: 15px;
-            overflow: hidden;
-            margin: 15px 0;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            margin-top: 10px;
         }
-
         .progress-fill {
-            height: 100%;
-            background: linear-gradient(90deg, #4CAF50, #45a049);
-            border-radius: 15px;
+            height: 20px;
+            background-color: #007bff;
+            border-radius: 4px;
+            transition: width 0.3s;
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-weight: bold;
-            transition: width 0.3s ease;
+            font-size: 12px;
         }
-
-        .debug-section {
-            margin: 15px 0;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            padding: 10px;
-            background: #f9f9f9;
-        }
-
-        .debug-info {
-            font-family: 'Courier New', monospace;
-            font-size: 0.9em;
-            background: white;
-            padding: 10px;
+        .stats-panel {
+            background-color: #f8f9fa;
+            padding: 8px;
             border-radius: 4px;
-            border-left: 4px solid #607d8b;
             margin-top: 10px;
+            font-size: 11px;
         }
     </style>
+</head>
+<body>
+    <h1>视频分析工具 - 智能增强版</h1>
+
+    <div class="main-container">
+        <div class="left-panel">
+            <div id="controls">
+                <input type="file" id="videoUpload" accept="video/*"><br>
+                
+                <div id="analysisSettings" style="display: none;">
+                    <h4>分析设置</h4>
+                    <label>采样策略:</label>
+                    <select id="samplingStrategy">
+                        <option value="auto">自动 (推荐)</option>
+                        <option value="high">高密度 (30fps)</option>
+                        <option value="medium">中密度 (20fps)</option>
+                        <option value="low">低密度 (15fps)</option>
+                    </select>
+                    
+                    <label>噪声滤波强度:</label>
+                    <select id="filterStrength">
+                        <option value="light">轻度</option>
+                        <option value="medium" selected>中度 (推荐)</option>
+                        <option value="strong">强度</option>
+                    </select>
+                    
+                    <label>峰值检测敏感度:</label>
+                    <select id="peakSensitivity">
+                        <option value="low">低 (减少误检)</option>
+                        <option value="medium" selected>中 (推荐)</option>
+                        <option value="high">高 (检测更多峰值)</option>
+                    </select>
+                </div>
+                
+                <button id="startAnalysisBtn" disabled>开始智能分析</button>
+                <button id="refreshPreviewBtn">刷新预览</button>
+                <button id="testOcrBtn" disabled>测试当前OCR</button>
+                <p id="statusMessage">请先上传视频。</p>
+                <div class="progress-bar" id="progressBar" style="display: none;">
+                    <div class="progress-fill" id="progressFill" style="width: 0%;">0%</div>
+                </div>
+                <div id="debugInfo"></div>
+                <div id="analysisStats" class="stats-panel" style="display: none;"></div>
+            </div>
+
+            <div id="videoContainer">
+                <video id="videoPlayer" controls></video>
+                <canvas id="drawingCanvas"></canvas>
+            </div>
+            <canvas id="processingCanvas" style="display:none;"></canvas>
+
+            <div id="results">
+                <h2>分析结果</h2>
+                <div id="brightnessChartContainer">
+                    <canvas id="brightnessChart"></canvas>
+                </div>
+                <div id="resultsTableContainer"></div>
+                <div id="chartContainer">
+                    <canvas id="resultsChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <h3>区域预览</h3>
+            
+            <div class="preview-container">
+                <div class="preview-item">
+                    <div class="preview-header" style="color: #dc3545;">
+                        🔴 亮度分析区域
+                    </div>
+                    <div class="preview-content">
+                        <canvas id="brightnessPreviewCanvas" class="preview-canvas" width="250" height="150"></canvas>
+                        <div class="preview-info" id="brightnessPreviewInfo">未定义区域</div>
+                    </div>
+                </div>
+
+                <div class="preview-item">
+                    <div class="preview-header" style="color: #007bff;">
+                        🔵 OCR识别区域（原始）
+                    </div>
+                    <div class="preview-content">
+                        <canvas id="ocrPreviewCanvas" class="preview-canvas" width="250" height="150"></canvas>
+                        <div class="preview-info" id="ocrPreviewInfo">未定义区域</div>
+                    </div>
+                </div>
+
+                <div class="preview-item">
+                    <div class="preview-header" style="color: #6f42c1;">
+                        🟣 多策略OCR预处理
+                    </div>
+                    <div class="preview-content">
+                        <canvas id="ocrProcessedPreviewCanvas" class="preview-canvas" width="250" height="150"></canvas>
+                        <div class="preview-info" id="ocrProcessedPreviewInfo">未处理</div>
+                        <div class="strategy-previews" id="strategyPreviews"></div>
+                        <div id="ocrTestResult" class="ocr-test-result" style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="enhanced-ocr.js"></script>
+    <script src="signal-processor.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
