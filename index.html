@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智能条纹计数分析工具 - PaddleOCR增强版</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css"> <!-- 注意：如果style.css文件确实不存在且内联样式已足够，可以移除此行或创建一个空的style.css文件以避免404 -->
     
     <!-- PaddleOCR依赖库 -->
     <script src="https://cdn.jsdelivr.net/npm/@paddlejs/paddlejs-core@latest/dist/paddle.min.js"></script>
@@ -284,7 +284,7 @@
 
     <!-- 脚本文件 -->
     <script src="signal-processor.js"></script>
-    <script src="peak-detector.js"></script>
+    <!-- <script src="peak-detector.js"></script> --> <!-- 已注释掉，因为此文件缺失且app.js中已有findLocalMaxima实现 -->
     <script src="enhanced-ocr.js"></script>
     <script src="paddle-ocr.js"></script>
     <script src="app.js"></script>
