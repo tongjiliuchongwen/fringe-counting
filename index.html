@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <title>视频分析工具 - 增强OCR版</title>
+    <title>视频分析工具 - 智能增强版</title>
     <style>
         body {
             font-family: sans-serif;
@@ -130,6 +130,26 @@
             background-color: #ffc107;
             color: #000;
         }
+        #analysisSettings {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        #analysisSettings label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        #analysisSettings select, #analysisSettings input {
+            width: 100%;
+            padding: 4px;
+            margin-bottom: 8px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            font-size: 12px;
+        }
         #controls input[type="file"] {
             padding: 5px;
             margin-bottom: 10px;
@@ -155,9 +175,18 @@
         }
         #chartContainer {
             width: 100%;
-            max-width: 600px;
+            max-width: 800px;
             height: 400px;
             margin-top: 20px;
+        }
+        #brightnessChartContainer {
+            width: 100%;
+            max-width: 800px;
+            height: 300px;
+            margin-top: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
         }
         #debugInfo {
             background-color: #f8f9fa;
@@ -177,12 +206,6 @@
             max-height: 200px;
             overflow-y: auto;
         }
-        .no-preview {
-            color: #999;
-            font-style: italic;
-            padding: 20px;
-            text-align: center;
-        }
         .progress-bar {
             width: 100%;
             background-color: #f0f0f0;
@@ -200,16 +223,49 @@
             color: white;
             font-size: 12px;
         }
+        .stats-panel {
+            background-color: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 11px;
+        }
     </style>
 </head>
 <body>
-    <h1>视频分析工具 - 增强OCR版</h1>
+    <h1>视频分析工具 - 智能增强版</h1>
 
     <div class="main-container">
         <div class="left-panel">
             <div id="controls">
                 <input type="file" id="videoUpload" accept="video/*"><br>
-                <button id="startAnalysisBtn" disabled>开始完整分析</button>
+                
+                <div id="analysisSettings" style="display: none;">
+                    <h4>分析设置</h4>
+                    <label>采样策略:</label>
+                    <select id="samplingStrategy">
+                        <option value="auto">自动 (推荐)</option>
+                        <option value="high">高密度 (30fps)</option>
+                        <option value="medium">中密度 (20fps)</option>
+                        <option value="low">低密度 (15fps)</option>
+                    </select>
+                    
+                    <label>噪声滤波强度:</label>
+                    <select id="filterStrength">
+                        <option value="light">轻度</option>
+                        <option value="medium" selected>中度 (推荐)</option>
+                        <option value="strong">强度</option>
+                    </select>
+                    
+                    <label>峰值检测敏感度:</label>
+                    <select id="peakSensitivity">
+                        <option value="low">低 (减少误检)</option>
+                        <option value="medium" selected>中 (推荐)</option>
+                        <option value="high">高 (检测更多峰值)</option>
+                    </select>
+                </div>
+                
+                <button id="startAnalysisBtn" disabled>开始智能分析</button>
                 <button id="refreshPreviewBtn">刷新预览</button>
                 <button id="testOcrBtn" disabled>测试当前OCR</button>
                 <p id="statusMessage">请先上传视频。</p>
@@ -217,6 +273,7 @@
                     <div class="progress-fill" id="progressFill" style="width: 0%;">0%</div>
                 </div>
                 <div id="debugInfo"></div>
+                <div id="analysisStats" class="stats-panel" style="display: none;"></div>
             </div>
 
             <div id="videoContainer">
@@ -227,6 +284,9 @@
 
             <div id="results">
                 <h2>分析结果</h2>
+                <div id="brightnessChartContainer">
+                    <canvas id="brightnessChart"></canvas>
+                </div>
                 <div id="resultsTableContainer"></div>
                 <div id="chartContainer">
                     <canvas id="resultsChart"></canvas>
@@ -276,6 +336,7 @@
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="enhanced-ocr.js"></script>
+    <script src="signal-processor.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
