@@ -1,4 +1,4 @@
-// app.js - 智能增强版视频分析工具 (完全修复版)
+// app.js - 智能增强版视频分析工具 (PaddleOCR集成版) - 第一部分
 
 // --- DOM 元素获取 ---
 const videoUpload = document.getElementById('videoUpload');
@@ -40,6 +40,10 @@ const ocrProcessedPreviewInfo = document.getElementById('ocrProcessedPreviewInfo
 const strategyPreviews = document.getElementById('strategyPreviews');
 const ocrTestResult = document.getElementById('ocrTestResult');
 
+// PaddleOCR相关元素
+const ocrEngineSelect = document.getElementById('ocrEngine');
+const ocrEngineStatus = document.getElementById('ocrEngineStatus');
+
 // --- 全局状态变量 ---
 let videoFile = null;
 let brightnessRect = null;
@@ -61,10 +65,13 @@ let localMaximaFrames = [];
 let chartInstance = null;
 let brightnessChartInstance = null;
 
-// OCR 相关
+// OCR 相关 - 支持双引擎
 let ocrWorker = null;
+let paddleOCR = null;
 let enhancedOCR = null;
 let currentMaximaProcessingIndex = 0;
+let currentOCREngine = 'paddle'; // 默认使用PaddleOCR
+let isOCRSwitching = false;
 
 // 预览更新防抖
 let previewUpdateTimeout = null;
@@ -85,11 +92,13 @@ function updateProgress(percentage, text) {
 
 // --- 调试信息更新函数 ---
 function updateDebugInfo() {
+    const engineInfo = currentOCREngine === 'paddle' ? 'PaddleOCR (小数点优化)' : 'Tesseract (备选)';
     debugInfo.innerHTML = `
         视频原始尺寸: ${videoNaturalWidth} × ${videoNaturalHeight}<br>
         视频显示尺寸: ${Math.round(videoDisplayWidth)} × ${Math.round(videoDisplayHeight)}<br>
         画布内部尺寸: ${drawingCanvas.width} × ${drawingCanvas.height}<br>
         当前模式: ${currentMode}<br>
+        OCR引擎: ${engineInfo}<br>
         当前时间: ${videoPlayer.currentTime ? videoPlayer.currentTime.toFixed(2) + 's' : 'N/A'}<br>
         亮度区域: ${brightnessRect ? `${Math.round(brightnessRect.x)},${Math.round(brightnessRect.y)},${Math.round(brightnessRect.width)},${Math.round(brightnessRect.height)}` : '未定义'}<br>
         OCR区域: ${ocrRect ? `${Math.round(ocrRect.x)},${Math.round(ocrRect.y)},${Math.round(ocrRect.width)},${Math.round(ocrRect.height)}` : '未定义'}
@@ -106,8 +115,103 @@ function updateAnalysisStats(stats) {
         信号质量: ${stats.quality?.quality || 'N/A'}<br>
         信噪比: ${stats.quality?.snr ? stats.quality.snr.toFixed(2) : 'N/A'}<br>
         动态范围: ${stats.quality?.dynamicRange ? stats.quality.dynamicRange.toFixed(2) : 'N/A'}<br>
-        检测峰值: ${localMaximaFrames.length}个
+        检测峰值: ${localMaximaFrames.length}个<br>
+        OCR引擎: ${currentOCREngine === 'paddle' ? 'PaddleOCR' : 'Tesseract'}
     `;
+}
+
+// --- OCR 初始化 (双引擎支持) ---
+async function initializeOCR() {
+    if (!ocrEngineSelect || !ocrEngineStatus) {
+        // 如果页面没有OCR引擎选择器，使用默认Tesseract
+        await initializeTesseract();
+        return;
+    }
+    
+    currentOCREngine = ocrEngineSelect.value;
+    isOCRSwitching = true;
+    
+    try {
+        updateProgress(0, '正在初始化 OCR 服务...');
+        ocrEngineStatus.textContent = '初始化中...';
+        ocrEngineStatus.className = 'status-indicator loading';
+        
+        if (currentOCREngine === 'paddle') {
+            await initializePaddleOCR();
+        } else {
+            await initializeTesseract();
+        }
+        
+    } catch (error) {
+        console.error(`${currentOCREngine} 初始化失败:`, error);
+        ocrEngineStatus.textContent = '❌ 初始化失败';
+        ocrEngineStatus.className = 'status-indicator error';
+        
+        // 自动降级逻辑
+        if (currentOCREngine === 'paddle') {
+            console.log('PaddleOCR初始化失败，尝试降级到Tesseract...');
+            ocrEngineSelect.value = 'tesseract';
+            currentOCREngine = 'tesseract';
+            await initializeOCR(); // 递归重试
+        } else {
+            updateProgress(-1, `OCR 服务初始化失败: ${error.message}`);
+            alert(`OCR 初始化失败，请刷新页面重试。\n错误: ${error.message}`);
+        }
+    } finally {
+        isOCRSwitching = false;
+    }
+}
+
+// 初始化PaddleOCR
+async function initializePaddleOCR() {
+    updateProgress(25, '加载PaddleOCR模型...');
+    
+    // 检查PaddleOCR是否可用
+    if (!window.PaddleOCRWrapper) {
+        throw new Error('PaddleOCR库未正确加载，请检查网络连接');
+    }
+    
+    paddleOCR = new PaddleOCRWrapper();
+    
+    updateProgress(50, '初始化PaddleOCR引擎...');
+    await paddleOCR.initialize();
+    
+    updateProgress(75, '配置数字识别优化...');
+    enhancedOCR = paddleOCR; // 使用统一接口
+    
+    if (ocrEngineStatus) {
+        ocrEngineStatus.textContent = '✓ PaddleOCR已就绪';
+        ocrEngineStatus.className = 'status-indicator ready paddle';
+    }
+    updateProgress(-1, 'PaddleOCR 服务已就绪 - 小数点识别已优化');
+    console.log("PaddleOCR系统初始化完成");
+}
+
+// 初始化Tesseract
+async function initializeTesseract() {
+    updateProgress(25, '加载Tesseract语言包...');
+    ocrWorker = await Tesseract.createWorker('eng', 1, {
+        logger: m => {
+            if (m.status === 'recognizing text') {
+                const progressMsg = `OCR 识别中 (峰值 ${currentMaximaProcessingIndex + 1}/${localMaximaFrames.length}): ${Math.round(m.progress * 100)}%`;
+                updateProgress(m.progress * 100, progressMsg);
+            }
+        }
+    });
+    
+    updateProgress(50, '初始化Tesseract引擎...');
+    await ocrWorker.loadLanguage('eng');
+    await ocrWorker.initialize('eng');
+    
+    updateProgress(75, '创建增强OCR系统...');
+    enhancedOCR = new EnhancedOCR(ocrWorker);
+    
+    if (ocrEngineStatus) {
+        ocrEngineStatus.textContent = '✓ Tesseract已就绪';
+        ocrEngineStatus.className = 'status-indicator ready tesseract';
+    }
+    updateProgress(-1, 'Tesseract 服务已就绪');
+    console.log("Tesseract系统初始化完成");
 }
 
 // --- 预览更新函数 ---
@@ -227,7 +331,8 @@ function updateOcrPreview() {
         ocrPreviewInfo.innerHTML = `
             区域大小: ${Math.round(ocrRect.width)}×${Math.round(ocrRect.height)}px<br>
             位置: (${Math.round(ocrRect.x)}, ${Math.round(ocrRect.y)})<br>
-            缩放比例: ${scale.toFixed(2)}x
+            缩放比例: ${scale.toFixed(2)}x<br>
+            OCR引擎: ${currentOCREngine === 'paddle' ? 'PaddleOCR' : 'Tesseract'}
         `;
         
         updateOcrProcessedPreview();
@@ -257,7 +362,12 @@ function updateOcrProcessedPreview() {
         );
         
         // 使用增强OCR的第一个策略进行预览
-        const processedData = enhancedOCR.strategy1_BasicThreshold(tempCtx, tempCanvas);
+        let processedData;
+        if (currentOCREngine === 'paddle' && enhancedOCR.strategyDigitOptimized) {
+            processedData = enhancedOCR.strategyDigitOptimized(tempCtx, tempCanvas);
+        } else {
+            processedData = enhancedOCR.strategy1_BasicThreshold(tempCtx, tempCanvas);
+        }
         
         const scale = Math.min(
             (ocrProcessedPreviewCanvas.width - 20) / ocrRect.width,
@@ -279,7 +389,7 @@ function updateOcrProcessedPreview() {
             offsetX, offsetY, previewWidth, previewHeight
         );
         
-        ocrProcessedPreviewCtx.strokeStyle = '#6f42c1';
+        ocrProcessedPreviewCtx.strokeStyle = currentOCREngine === 'paddle' ? '#28a745' : '#6f42c1';
         ocrProcessedPreviewCtx.lineWidth = 2;
         ocrProcessedPreviewCtx.strokeRect(offsetX, offsetY, previewWidth, previewHeight);
         
@@ -288,7 +398,8 @@ function updateOcrProcessedPreview() {
         ocrProcessedPreviewInfo.innerHTML = `
             预处理: ${processedData.strategy}<br>
             阈值: ${processedData.threshold}<br>
-            白色比例: ${whiteRatio.toFixed(1)}%
+            白色比例: ${whiteRatio.toFixed(1)}%<br>
+            引擎: ${currentOCREngine === 'paddle' ? 'PaddleOCR' : 'Tesseract'}
         `;
         
     } catch (error) {
@@ -297,6 +408,7 @@ function updateOcrProcessedPreview() {
         ocrProcessedPreviewInfo.innerHTML = 'OCR预处理失败';
     }
 }
+// app.js - 智能增强版视频分析工具 (PaddleOCR集成版) - 第二部分
 
 function showStrategyPreviews(strategyCanvases) {
     strategyPreviews.innerHTML = '';
@@ -395,37 +507,6 @@ function showEmptyPreview(ctx, canvas, text) {
     ctx.fillText(text, canvas.width/2, canvas.height/2);
 }
 
-// --- OCR 初始化 ---
-async function initializeOCR() {
-    updateProgress(0, '正在初始化 OCR 服务...');
-    try {
-        ocrWorker = await Tesseract.createWorker('eng', 1, {
-            logger: m => {
-                if (m.status === 'recognizing text') {
-                    const progressMsg = `OCR 识别中 (峰值 ${currentMaximaProcessingIndex + 1}/${localMaximaFrames.length}): ${Math.round(m.progress * 100)}%`;
-                    updateProgress(m.progress * 100, progressMsg);
-                }
-            }
-        });
-        
-        updateProgress(25, '加载OCR语言包...');
-        await ocrWorker.loadLanguage('eng');
-        
-        updateProgress(50, '初始化OCR引擎...');
-        await ocrWorker.initialize('eng');
-        
-        updateProgress(75, '创建增强OCR系统...');
-        enhancedOCR = new EnhancedOCR(ocrWorker);
-        
-        updateProgress(-1, 'OCR 服务已就绪。请上传视频。');
-        console.log("增强OCR系统初始化完成");
-    } catch (error) {
-        console.error("OCR 初始化失败:", error);
-        updateProgress(-1, 'OCR 服务初始化失败。');
-        alert(`OCR 初始化失败: ${error.message}`);
-    }
-}
-
 // --- 画布尺寸同步函数 ---
 function syncCanvasWithVideo() {
     const videoRect = videoPlayer.getBoundingClientRect();
@@ -473,13 +554,14 @@ function clearAndRedrawRects() {
     }
     
     if (ocrRect) {
-        drawingCtx.strokeStyle = 'rgba(0, 0, 255, 0.8)';
+        drawingCtx.strokeStyle = currentOCREngine === 'paddle' ? 'rgba(0, 128, 0, 0.8)' : 'rgba(0, 0, 255, 0.8)';
         drawingCtx.lineWidth = 3;
         drawingCtx.strokeRect(ocrRect.x, ocrRect.y, ocrRect.width, ocrRect.height);
         
-        drawingCtx.fillStyle = 'rgba(0, 0, 255, 0.8)';
+        drawingCtx.fillStyle = currentOCREngine === 'paddle' ? 'rgba(0, 128, 0, 0.8)' : 'rgba(0, 0, 255, 0.8)';
         drawingCtx.font = '16px Arial';
-        drawingCtx.fillText('OCR区域', ocrRect.x, ocrRect.y - 5);
+        const label = currentOCREngine === 'paddle' ? 'PaddleOCR区域' : 'OCR区域';
+        drawingCtx.fillText(label, ocrRect.x, ocrRect.y - 5);
     }
 }
 
@@ -530,6 +612,45 @@ videoPlayer.addEventListener('seeked', () => {
 videoPlayer.addEventListener('resize', syncCanvasWithVideo);
 window.addEventListener('resize', syncCanvasWithVideo);
 
+// OCR引擎切换事件处理
+if (ocrEngineSelect) {
+    ocrEngineSelect.addEventListener('change', async () => {
+        if (isOCRSwitching) return; // 防止重复切换
+        
+        const newEngine = ocrEngineSelect.value;
+        if (newEngine === currentOCREngine) return;
+        
+        try {
+            // 清理当前OCR实例
+            if (paddleOCR && paddleOCR.cleanup) {
+                await paddleOCR.cleanup();
+                paddleOCR = null;
+            }
+            if (ocrWorker && ocrWorker.terminate) {
+                await ocrWorker.terminate();
+                ocrWorker = null;
+            }
+            
+            enhancedOCR = null;
+            
+            // 重新初始化新引擎
+            await initializeOCR();
+            
+            // 如果有定义的区域，刷新预览
+            if (ocrRect) {
+                clearAndRedrawRects(); // 更新OCR区域颜色
+                schedulePreviewUpdate();
+            }
+            
+            updateDebugInfo();
+            
+        } catch (error) {
+            console.error('OCR引擎切换失败:', error);
+            alert(`OCR引擎切换失败: ${error.message}`);
+        }
+    });
+}
+
 // 刷新预览按钮
 refreshPreviewBtn.addEventListener('click', () => {
     if (videoFile) {
@@ -547,28 +668,32 @@ testOcrBtn.addEventListener('click', async () => {
         return;
     }
     
-    updateProgress(0, '正在测试当前帧OCR...');
+    const engineName = currentOCREngine === 'paddle' ? 'PaddleOCR' : 'Tesseract';
+    updateProgress(0, `正在使用${engineName}测试当前帧...`);
     testOcrBtn.disabled = true;
     
     try {
         const result = await performSingleOCR(videoPlayer.currentTime, 0, true);
         displayOCRTestDetails(result);
-        updateProgress(-1, 'OCR测试完成。');
+        updateProgress(-1, `${engineName}测试完成`);
         
         // 显示策略预览
-        const strategyCanvases = enhancedOCR.getStrategyCanvases();
-        showStrategyPreviews(strategyCanvases);
+        if (enhancedOCR && enhancedOCR.getStrategyCanvases) {
+            const strategyCanvases = enhancedOCR.getStrategyCanvases();
+            showStrategyPreviews(strategyCanvases);
+        }
         
     } catch (error) {
+        console.error('OCR测试失败:', error);
         ocrTestResult.style.display = 'block';
         ocrTestResult.innerHTML = `<strong>OCR测试失败:</strong><br>${error.message}`;
-        updateProgress(-1, 'OCR测试失败。');
+        updateProgress(-1, 'OCR测试失败');
     } finally {
         testOcrBtn.disabled = false;
     }
 });
 
-// 鼠标绘制事件 - 完整版本
+// 鼠标绘制事件
 drawingCanvas.addEventListener('mousedown', (e) => {
     if (!videoFile || currentMode === 'analyzing') return;
     
@@ -587,7 +712,13 @@ drawingCanvas.addEventListener('mousemove', (e) => {
     clearAndRedrawRects();
     
     // 绘制预览矩形
-    const color = currentMode === 'brightness' ? 'rgba(255, 0, 0, 0.5)' : 'rgba(0, 0, 255, 0.5)';
+    let color;
+    if (currentMode === 'brightness') {
+        color = 'rgba(255, 0, 0, 0.5)';
+    } else {
+        color = currentOCREngine === 'paddle' ? 'rgba(0, 128, 0, 0.5)' : 'rgba(0, 0, 255, 0.5)';
+    }
+    
     drawingCtx.strokeStyle = color;
     drawingCtx.lineWidth = 2;
     drawingCtx.strokeRect(
@@ -623,7 +754,8 @@ drawingCanvas.addEventListener('mouseup', (e) => {
     if (currentMode === 'brightness') {
         brightnessRect = rect;
         currentMode = 'ocr_define';
-        statusMessage.textContent = '亮度区域已定义。现在请绘制数字识别区域（蓝色框）。';
+        const engineName = currentOCREngine === 'paddle' ? 'PaddleOCR数字识别' : '数字识别';
+        statusMessage.textContent = `亮度区域已定义。现在请绘制${engineName}区域。`;
         console.log('亮度区域已定义:', brightnessRect);
     } else if (currentMode === 'ocr_define') {
         ocrRect = rect;
@@ -649,6 +781,7 @@ startAnalysisBtn.addEventListener('click', async () => {
     currentMode = 'analyzing';
     startAnalysisBtn.disabled = true;
     testOcrBtn.disabled = true;
+    if (ocrEngineSelect) ocrEngineSelect.disabled = true;
     videoPlayer.pause();
     
     await performCompleteAnalysis();
@@ -664,6 +797,7 @@ function resetAnalysisState() {
     currentMode = 'brightness';
     startAnalysisBtn.disabled = true;
     testOcrBtn.disabled = true;
+    if (ocrEngineSelect) ocrEngineSelect.disabled = false;
     analysisSettings.style.display = 'none';
     analysisStats.style.display = 'none';
     
@@ -692,12 +826,10 @@ async function analyzeBrightness() {
     
     updateProgress(10, '初始化智能分析参数...');
     
-    // 根据用户设置确定采样策略
     let samplingRate;
     const strategy = samplingStrategy.value;
     
     if (strategy === 'auto') {
-        // 自动策略：根据视频长度决定采样密度
         if (duration <= 10) {
             samplingRate = 30;
         } else if (duration <= 60) {
@@ -757,9 +889,6 @@ async function analyzeBrightness() {
     
     updateProgress(45, '应用智能信号处理...');
     
-    // 信号处理阶段
-    console.log(`原始数据统计: 样本数=${rawBrightnessValues.length}, 范围=[${Math.min(...rawBrightnessValues).toFixed(2)}, ${Math.max(...rawBrightnessValues).toFixed(2)}]`);
-    
     const strength = filterStrength.value;
     const processResult = SignalProcessor.processSignal(rawBrightnessValues, strength);
     
@@ -781,7 +910,7 @@ async function analyzeBrightness() {
     };
 }
 
-// --- 智能峰值检测 (重写版本 - 简单直接) ---
+// --- 智能峰值检测 ---
 function findLocalMaxima() {
     localMaximaFrames = [];
     
@@ -826,10 +955,8 @@ function findLocalMaxima() {
     for (let i = minDistance; i < smoothedValues.length - minDistance; i++) {
         const current = smoothedValues[i];
         
-        // 高度过滤
         if (current < threshold) continue;
         
-        // 检查是否为局部最大值
         let isLocalMax = true;
         for (let j = i - minDistance; j <= i + minDistance; j++) {
             if (j !== i && smoothedValues[j] >= current) {
@@ -865,7 +992,6 @@ function findLocalMaxima() {
             finalPeaks.push(candidate);
         }
         
-        // 限制峰值数量
         if (finalPeaks.length >= 20) break;
     }
     
@@ -876,12 +1002,11 @@ function findLocalMaxima() {
         frameNumber: peak.index,
         time: brightnessData[peak.index].frameTime,
         value: peak.value,
-        prominence: peak.significance || 1.0,  // 使用显著性作为突出度
+        prominence: peak.significance || 1.0,
         significance: peak.significance || 1.0
     }));
     
     console.log(`简化峰值检测完成: 检测到${localMaximaFrames.length}个可靠峰值`);
-    console.log('峰值详情:', localMaximaFrames);
 }
 
 // --- 完整分析流程 ---
@@ -894,10 +1019,8 @@ async function performCompleteAnalysis() {
         updateProgress(50, '智能峰值检测...');
         findLocalMaxima();
         
-        // 更新统计信息
         updateAnalysisStats(analysisResults);
         
-        // 创建亮度分析图表
         updateProgress(55, '生成亮度分析图表...');
         createBrightnessChart();
         
@@ -906,14 +1029,15 @@ async function performCompleteAnalysis() {
             return;
         }
         
-        updateProgress(60, `找到 ${localMaximaFrames.length} 个可靠亮度峰值，开始OCR识别...`);
+        const engineName = currentOCREngine === 'paddle' ? 'PaddleOCR' : 'Tesseract';
+        updateProgress(60, `找到 ${localMaximaFrames.length} 个可靠亮度峰值，开始${engineName}识别...`);
         
         await performOCRAnalysis();
         
         updateProgress(95, '生成最终结果...');
         displayResults();
         
-        updateProgress(-1, `智能分析完成！采样${analysisResults.totalSamples}个点，检测到${localMaximaFrames.length}个可靠峰值。`);
+        updateProgress(-1, `智能分析完成！使用${engineName}引擎，采样${analysisResults.totalSamples}个点，检测到${localMaximaFrames.length}个可靠峰值。`);
         
     } catch (error) {
         console.error('分析过程出错:', error);
@@ -921,11 +1045,12 @@ async function performCompleteAnalysis() {
     } finally {
         startAnalysisBtn.disabled = false;
         testOcrBtn.disabled = false;
+        if (ocrEngineSelect) ocrEngineSelect.disabled = false;
         currentMode = 'ready_to_analyze';
     }
 }
 
-// --- 辅助函数：跳转到指定时间 ---
+// --- 辅助函数 ---
 function seekToTime(time) {
     return new Promise(resolve => {
         const onSeeked = () => {
@@ -937,7 +1062,6 @@ function seekToTime(time) {
     });
 }
 
-// --- 辅助函数：计算平均亮度 ---
 function calculateAverageBrightness(imageData) {
     const data = imageData.data;
     let totalBrightness = 0;
@@ -963,7 +1087,8 @@ async function performOCRAnalysis() {
         const frameData = localMaximaFrames[i];
         
         const progress = 60 + (i / localMaximaFrames.length * 35);
-        updateProgress(progress, `OCR处理进度: ${i + 1}/${localMaximaFrames.length} (时间: ${frameData.time.toFixed(2)}s)`);
+        const engineName = currentOCREngine === 'paddle' ? 'PaddleOCR' : 'Tesseract';
+        updateProgress(progress, `${engineName}处理进度: ${i + 1}/${localMaximaFrames.length} (时间: ${frameData.time.toFixed(2)}s)`);
         
         await seekToTime(frameData.time);
         
@@ -972,7 +1097,7 @@ async function performOCRAnalysis() {
     }
 }
 
-// --- 单帧OCR处理（增强版） ---
+// --- 单帧OCR处理 ---
 async function performSingleOCR(frameTime, occurrenceIndex, isTest = false) {
     try {
         processingCtx.drawImage(videoPlayer, 0, 0, videoNaturalWidth, videoNaturalHeight);
@@ -988,10 +1113,9 @@ async function performSingleOCR(frameTime, occurrenceIndex, isTest = false) {
             0, 0, ocrRect.width, ocrRect.height
         );
         
-        // 使用增强OCR系统
         const enhancedResult = await enhancedOCR.processImageWithMultipleStrategies(tempCanvas, tempCtx);
         
-        console.log(`增强OCR结果 (时间${frameTime.toFixed(2)}s):`, enhancedResult);
+        console.log(`增强OCR结果 (时间${frameTime.toFixed(2)}s, 引擎${currentOCREngine}):`, enhancedResult);
         
         return {
             occurrenceIndex: occurrenceIndex + 1,
@@ -999,13 +1123,14 @@ async function performSingleOCR(frameTime, occurrenceIndex, isTest = false) {
             value: enhancedResult.value,
             rawText: enhancedResult.rawText,
             confidence: enhancedResult.confidence,
-            strategy: enhancedResult.strategyName,
+            strategy: enhancedResult.strategyName || enhancedResult.strategy,
             hasDecimalPoint: enhancedResult.hasDecimalPoint,
-            score: enhancedResult.score
+            score: enhancedResult.score,
+            engine: currentOCREngine === 'paddle' ? 'PaddleOCR' : 'Tesseract'
         };
         
     } catch (error) {
-        console.error(`增强OCR处理失败 (时间${frameTime.toFixed(2)}s):`, error);
+        console.error(`增强OCR处理失败 (时间${frameTime.toFixed(2)}s, 引擎${currentOCREngine}):`, error);
         return {
             occurrenceIndex: occurrenceIndex + 1,
             frameTime: frameTime,
@@ -1014,29 +1139,65 @@ async function performSingleOCR(frameTime, occurrenceIndex, isTest = false) {
             confidence: 0,
             strategy: 'error',
             hasDecimalPoint: false,
-            score: 0
+            score: 0,
+            engine: currentOCREngine === 'paddle' ? 'PaddleOCR' : 'Tesseract'
         };
     }
 }
 
 // --- 显示OCR测试详细结果 ---
 function displayOCRTestDetails(result) {
+    const engineName = result.engine || (currentOCREngine === 'paddle' ? 'PaddleOCR' : 'Tesseract');
+    const engineClass = currentOCREngine === 'paddle' ? 'paddle' : 'tesseract';
+    
     ocrTestResult.style.display = 'block';
     ocrTestResult.innerHTML = `
-        <strong>增强OCR测试结果:</strong><br>
-        <strong>最终结果:</strong><br>
-        - 识别数字: ${isNaN(result.value) ? 'N/A' : result.value}<br>
-        - 原始文本: "${result.rawText}"<br>
-        - 置信度: ${result.confidence.toFixed(1)}%<br>
-        - 使用策略: ${result.strategy}<br>
-        - 评分: ${result.score ? result.score.toFixed(3) : 'N/A'}<br>
-        - 包含小数点: ${result.hasDecimalPoint ? '是' : '否'}<br>
-        <br>
-        <strong>提示:</strong> 点击下方策略预览查看详细处理结果
+        <div class="ocr-result-header ${engineClass}">
+            <strong>${engineName} 测试结果</strong>
+        </div>
+        <div class="ocr-result-details">
+            <div class="result-row">
+                <span class="label">🔢 识别数字:</span>
+                <span class="value ${isNaN(result.value) ? 'error' : 'success'}">${isNaN(result.value) ? 'N/A' : result.value}</span>
+            </div>
+            <div class="result-row">
+                <span class="label">📝 原始文本:</span>
+                <span class="value">"${result.rawText}"</span>
+            </div>
+            <div class="result-row">
+                <span class="label">🎯 置信度:</span>
+                <span class="value confidence-${getConfidenceLevel(result.confidence)}">${result.confidence.toFixed(1)}%</span>
+            </div>
+            <div class="result-row">
+                <span class="label">⚙️ 使用策略:</span>
+                <span class="value">${result.strategy || result.strategyName}</span>
+            </div>
+            <div class="result-row">
+                <span class="label">📊 评分:</span>
+                <span class="value">${result.score ? result.score.toFixed(3) : 'N/A'}</span>
+            </div>
+            <div class="result-row">
+                <span class="label">🔘 小数点:</span>
+                <span class="value ${result.hasDecimalPoint ? 'success' : 'neutral'}">${result.hasDecimalPoint ? '✓ 检测到' : '✗ 未检测到'}</span>
+            </div>
+            <div class="engine-badge ${engineClass}">
+                ${currentOCREngine === 'paddle' ? '🚀 PaddleOCR 小数点优化' : '🔍 Tesseract 传统识别'}
+            </div>
+        </div>
+        <div class="tip">
+            💡 <strong>提示:</strong> 点击下方策略预览查看详细处理过程
+            ${currentOCREngine === 'paddle' ? '<br>🎯 PaddleOCR针对小数点识别进行了特别优化' : ''}
+        </div>
     `;
 }
 
-// --- 创建亮度分析图表 ---
+function getConfidenceLevel(confidence) {
+    if (confidence >= 80) return 'high';
+    if (confidence >= 60) return 'medium';
+    return 'low';
+}
+
+// --- 创建图表 ---
 function createBrightnessChart() {
     if (brightnessData.length === 0) return;
     
@@ -1086,46 +1247,35 @@ function createBrightnessChart() {
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-                x: {
-                    title: { display: true, text: '时间 (秒)' }
-                },
-                y: {
-                    title: { display: true, text: '亮度值' }
-                }
+                x: { title: { display: true, text: '时间 (秒)' } },
+                y: { title: { display: true, text: '亮度值' } }
             },
             plugins: {
                 title: {
                     display: true,
-                    text: '智能亮度分析曲线'
+                    text: `智能亮度分析曲线 - ${currentOCREngine === 'paddle' ? 'PaddleOCR引擎' : 'Tesseract引擎'}`
                 }
             }
         }
     });
 }
 
-// --- 显示结果 ---
 function displayResults() {
     let tableHTML = `
         <table>
             <thead>
                 <tr>
-                    <th>序号</th>
-                    <th>帧时间(s)</th>
-                    <th>识别数字</th>
-                    <th>原始文本</th>
-                    <th>置信度</th>
-                    <th>策略</th>
-                    <th>小数点</th>
-                    <th>评分</th>
+                    <th>序号</th><th>帧时间(s)</th><th>识别数字</th><th>原始文本</th>
+                    <th>置信度</th><th>策略</th><th>小数点</th><th>评分</th><th>引擎</th>
                 </tr>
-            </thead>
-            <tbody>
+            </thead><tbody>
     `;
     
     if (analysisResults.length === 0) {
-        tableHTML += '<tr><td colspan="8">无分析结果</td></tr>';
+        tableHTML += '<tr><td colspan="9">无分析结果</td></tr>';
     } else {
         analysisResults.forEach(result => {
+            const engineBadge = result.engine === 'PaddleOCR' ? '🚀' : '🔍';
             tableHTML += `
                 <tr>
                     <td>${result.occurrenceIndex}</td>
@@ -1136,6 +1286,7 @@ function displayResults() {
                     <td>${result.strategy || 'N/A'}</td>
                     <td>${result.hasDecimalPoint ? '✓' : '✗'}</td>
                     <td>${result.score ? result.score.toFixed(3) : 'N/A'}</td>
+                    <td>${engineBadge} ${result.engine || currentOCREngine}</td>
                 </tr>
             `;
         });
@@ -1143,11 +1294,9 @@ function displayResults() {
     
     tableHTML += '</tbody></table>';
     resultsTableContainer.innerHTML = tableHTML;
-    
     createResultChart();
 }
 
-// --- 创建结果图表 ---
 function createResultChart() {
     if (chartInstance) chartInstance.destroy();
     
@@ -1162,10 +1311,10 @@ function createResultChart() {
         type: 'scatter',
         data: {
             datasets: [{
-                label: '识别数字',
+                label: `识别数字 (${currentOCREngine === 'paddle' ? 'PaddleOCR' : 'Tesseract'})`,
                 data: validResults.map(r => ({ x: r.occurrenceIndex, y: r.value })),
-                borderColor: 'rgb(75, 192, 192)',
-                backgroundColor: 'rgba(75, 192, 192, 0.6)',
+                borderColor: currentOCREngine === 'paddle' ? 'rgb(75, 192, 75)' : 'rgb(75, 192, 192)',
+                backgroundColor: currentOCREngine === 'paddle' ? 'rgba(75, 192, 75, 0.6)' : 'rgba(75, 192, 192, 0.6)',
                 showLine: true,
                 pointRadius: 6
             }]
@@ -1174,14 +1323,8 @@ function createResultChart() {
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-                x: {
-                    type: 'linear',
-                    title: { display: true, text: '出现次序' },
-                    ticks: { stepSize: 1 }
-                },
-                y: {
-                    title: { display: true, text: '识别数字' }
-                }
+                x: { type: 'linear', title: { display: true, text: '出现次序' }, ticks: { stepSize: 1 } },
+                y: { title: { display: true, text: '识别数字' } }
             },
             plugins: {
                 tooltip: {
