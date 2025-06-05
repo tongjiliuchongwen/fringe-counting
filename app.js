@@ -782,54 +782,104 @@ async function analyzeBrightness() {
 }
 
 // --- 智能峰值检测 ---
-// --- 智能峰值检测 ---
-function findLocalMaxima() {
-    localMaximaFrames = [];
-    
-    // 如果数据点过少，直接退到全局最大值
-    if (brightnessData.length < 10) {
-        console.warn('数据点太少，使用全局最大亮度帧作为峰值回退');
-        const maxItem = brightnessData.reduce((p, c) => c.avgBrightness > p.avgBrightness ? c : p, brightnessData[0]);
-        localMaximaFrames.push({
-            time: maxItem.frameTime,
-            value: maxItem.avgBrightness,
-            // 可以加上一个标记
-            fallback: true
-        });
-        return;
-    }
-    
-    const smoothedValues = brightnessData.map(d => d.avgBrightness);
-    const sensitivity = peakSensitivity.value;
-    
-    // 使用我们封装的智能峰值检测器
-    const peaks = PeakDetector.findPeaks(smoothedValues, {
-        sensitivity: sensitivity
-    });
-    
-    // 如果没有检测到任何峰值，也退到全局最大
-    if (peaks.length === 0) {
-        console.warn('没有局部峰值，使用全局最大亮度帧作为峰值回退');
-        const maxItem = brightnessData.reduce((p, c) => c.avgBrightness > p.avgBrightness ? c : p, brightnessData[0]);
-        localMaximaFrames.push({
-            time: maxItem.frameTime,
-            value: maxItem.avgBrightness,
-            fallback: true
-        });
-        return;
-    }
-    
-    // 正常把所有候选峰值转成 localMaximaFrames
-    localMaximaFrames = peaks.map(peak => ({
-        frameNumber: peak.index,
-        time: brightnessData[peak.index].frameTime,
-        value: peak.value,
-        prominence: peak.prominence.value || peak.prominence,
-        significance: peak.significance
-    }));
-    
-    console.log(`智能峰值检测完成: 检测到 ${localMaximaFrames.length} 个可靠峰值`, localMaximaFrames);
-}
+-function findLocalMaxima() {
+-    localMaximaFrames = [];
+-    
+-    // 如果数据点过少，直接退到全局最大值
+-    if (brightnessData.length < 10) {
+-        console.warn('数据点太少，使用全局最大亮度帧作为峰值回退');
+-        const maxItem = brightnessData.reduce((p, c) => c.avgBrightness > p.avgBrightness ? c : p, brightnessData[0]);
+-        localMaximaFrames.push({
+-            time: maxItem.frameTime,
+-            value: maxItem.avgBrightness,
+-            // 可以加上一个标记
+-            fallback: true
+-        });
+-        return;
+-    }
+-    
+-    const smoothedValues = brightnessData.map(d => d.avgBrightness);
+-    const sensitivity = peakSensitivity.value;
+-    
+-    // 使用我们封装的智能峰值检测器
+-    const peaks = PeakDetector.findPeaks(smoothedValues, {
+-        sensitivity: sensitivity
+-    });
+-    
+-    // 如果没有检测到任何峰值，也退到全局最大
+-    if (peaks.length === 0) {
+-        console.warn('没有局部峰值，使用全局最大亮度帧作为峰值回退');
+-        const maxItem = brightnessData.reduce((p, c) => c.avgBrightness > p.avgBrightness ? c : p, brightnessData[0]);
+-        localMaximaFrames.push({
+-            time: maxItem.frameTime,
+-            value: maxItem.avgBrightness,
+-            fallback: true
+-        });
+-        return;
+-    }
+-    
+-    // 正常把所有候选峰值转成 localMaximaFrames
+-    localMaximaFrames = peaks.map(peak => ({
+-        frameNumber: peak.index,
+-        time: brightnessData[peak.index].frameTime,
+-        value: peak.value,
+-        prominence: peak.prominence.value || peak.prominence,
+-        significance: peak.significance
+-    }));
+-    
+-    console.log(`智能峰值检测完成: 检测到 ${localMaximaFrames.length} 个可靠峰值`, localMaximaFrames);
+-}
++function findLocalMaxima() {
++    localMaximaFrames = [];
++    const N = brightnessData.length;
++    if (N === 0) return;
++
++    // 提取平滑亮度序列
++    const values = brightnessData.map(d => d.avgBrightness);
++
++    // 计算动态阈值：均值 + 0.5 * 标准差
++    const mean = values.reduce((a, b) => a + b, 0) / N;
++    const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / N;
++    const stdDev = Math.sqrt(variance);
++    const threshold = mean + 0.5 * stdDev;
++
++    // 局部最大值检测窗口大小，保证不会过于接近
++    const windowSize = Math.max(1, Math.floor(N / 30));
++
++    for (let i = windowSize; i < N - windowSize; i++) {
++        const current = values[i];
++        // 只有大于阈值才考虑
++        if (current < threshold) continue;
++
++        // 检查左右 windowSize 内是否都是当前最大
++        let isPeak = true;
++        for (let j = i - windowSize; j <= i + windowSize; j++) {
++            if (j !== i && values[j] >= current) {
++                isPeak = false;
++                break;
++            }
++        }
++        if (isPeak) {
++            localMaximaFrames.push({
++                frameNumber: i,
++                time: brightnessData[i].frameTime,
++                value: current
++            });
++        }
++    }
++
++    // 如果没有任何局部峰值，则选取全局最大作为至少一个峰值
++    if (localMaximaFrames.length === 0) {
++        const maxIdx = values.indexOf(Math.max(...values));
++        localMaximaFrames.push({
++            frameNumber: maxIdx,
++            time: brightnessData[maxIdx].frameTime,
++            value: values[maxIdx]
++        });
++    }
++
++    console.log(`局域峰值检测完成: 共检测到 ${localMaximaFrames.length} 个峰值`, localMaximaFrames);
++}
 // --- 完整分析流程 ---
 async function performCompleteAnalysis() {
     try {
