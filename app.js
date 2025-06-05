@@ -544,7 +544,7 @@ testOcrBtn.addEventListener('click', async () => {
     }
 });
 
-// 鼠标绘制事件
+// 鼠标绘制事件 - 修复完整版本
 drawingCanvas.addEventListener('mousedown', (e) => {
     if (!videoFile || currentMode === 'analyzing') return;
     
@@ -562,3 +562,403 @@ drawingCanvas.addEventListener('mousemove', (e) => {
     const coords = getCanvasCoordinates(e);
     clearAndRedrawRects();
     
+    // 绘制预览矩形
+    const color = currentMode === 'brightness' ? 'rgba(255, 0, 0, 0.5)' : 'rgba(0, 0, 255, 0.5)';
+    drawingCtx.strokeStyle = color;
+    drawingCtx.lineWidth = 2;
+    drawingCtx.strokeRect(
+        currentDrawingStart.x,
+        currentDrawingStart.y,
+        coords.x - currentDrawingStart.x,
+        coords.y - currentDrawingStart.y
+    );
+});
+
+drawingCanvas.addEventListener('mouseup', (e) => {
+    if (!isDrawing || !videoFile || currentMode === 'analyzing') return;
+    
+    isDrawing = false;
+    const coords = getCanvasCoordinates(e);
+    
+    // 创建标准矩形
+    const rect = {
+        x: Math.min(currentDrawingStart.x, coords.x),
+        y: Math.min(currentDrawingStart.y, coords.y),
+        width: Math.abs(coords.x - currentDrawingStart.x),
+        height: Math.abs(coords.y - currentDrawingStart.y)
+    };
+    
+    // 检查矩形大小
+    if (rect.width < 10 || rect.height < 10) {
+        statusMessage.textContent = '绘制的区域太小，请重新绘制。';
+        clearAndRedrawRects();
+        return;
+    }
+    
+    // 根据当前模式保存矩形
+    if (currentMode === 'brightness') {
+        brightnessRect = rect;
+        currentMode = 'ocr_define';
+        statusMessage.textContent = '亮度区域已定义。现在请绘制数字识别区域（蓝色框）。';
+        console.log('亮度区域已定义:', brightnessRect);
+    } else if (currentMode === 'ocr_define') {
+        ocrRect = rect;
+        currentMode = 'ready_to_analyze';
+        statusMessage.textContent = '所有区域已定义完成。可以测试OCR或开始完整分析。';
+        startAnalysisBtn.disabled = false;
+        testOcrBtn.disabled = false;
+        console.log('OCR区域已定义:', ocrRect);
+    }
+    
+    clearAndRedrawRects();
+    updateDebugInfo();
+    schedulePreviewUpdate();
+});
+
+// 开始分析按钮
+startAnalysisBtn.addEventListener('click', async () => {
+    if (!brightnessRect || !ocrRect || !videoFile) {
+        alert('请先完整定义所有分析区域。');
+        return;
+    }
+    
+    currentMode = 'analyzing';
+    startAnalysisBtn.disabled = true;
+    testOcrBtn.disabled = true;
+    videoPlayer.pause();
+    
+    await performCompleteAnalysis();
+});
+
+// --- 重置分析状态 ---
+function resetAnalysisState() {
+    brightnessRect = null;
+    ocrRect = null;
+    analysisResults = [];
+    brightnessData = [];
+    localMaximaFrames = [];
+    currentMode = 'brightness';
+    startAnalysisBtn.disabled = true;
+    testOcrBtn.disabled = true;
+    
+    if (chartInstance) {
+        chartInstance.destroy();
+        chartInstance = null;
+    }
+    
+    resultsTableContainer.innerHTML = "";
+    ocrTestResult.style.display = 'none';
+    strategyPreviews.innerHTML = '';
+    clearAndRedrawRects();
+    updateDebugInfo();
+    schedulePreviewUpdate();
+}
+
+// --- 完整分析流程 ---
+async function performCompleteAnalysis() {
+    try {
+        updateProgress(10, '开始分析视频亮度...');
+        
+        await analyzeBrightness();
+        
+        updateProgress(60, '寻找亮度峰值...');
+        findLocalMaxima();
+        
+        if (localMaximaFrames.length === 0) {
+            updateProgress(-1, '未找到亮度峰值，请调整亮度区域或检查视频内容。');
+            return;
+        }
+        
+        updateProgress(70, `找到 ${localMaximaFrames.length} 个亮度峰值，开始OCR识别...`);
+        
+        await performOCRAnalysis();
+        
+        updateProgress(95, '生成分析结果...');
+        displayResults();
+        
+        updateProgress(-1, '分析完成！');
+        
+    } catch (error) {
+        console.error('分析过程出错:', error);
+        updateProgress(-1, `分析失败: ${error.message}`);
+    } finally {
+        startAnalysisBtn.disabled = false;
+        testOcrBtn.disabled = false;
+        currentMode = 'ready_to_analyze';
+    }
+}
+
+// --- 亮度分析 ---
+async function analyzeBrightness() {
+    brightnessData = [];
+    const duration = videoPlayer.duration;
+    const frameRate = 25;
+    const interval = 1 / frameRate;
+    let currentTime = 0;
+    let frameCount = 0;
+    
+    while (currentTime <= duration) {
+        await seekToTime(currentTime);
+        
+        processingCtx.drawImage(videoPlayer, 0, 0, videoNaturalWidth, videoNaturalHeight);
+        
+        const imageData = processingCtx.getImageData(
+            brightnessRect.x, 
+            brightnessRect.y, 
+            brightnessRect.width, 
+            brightnessRect.height
+        );
+        
+        const avgBrightness = calculateAverageBrightness(imageData);
+        
+        brightnessData.push({
+            frameTime: currentTime,
+            avgBrightness: avgBrightness
+        });
+        
+        frameCount++;
+        const progress = 10 + (currentTime / duration * 50); // 10%-60%
+        updateProgress(progress, `分析亮度进度: ${((currentTime / duration) * 100).toFixed(1)}% (帧: ${frameCount})`);
+        
+        currentTime += interval;
+        if (currentTime > duration) {
+            currentTime = duration;
+        }
+        if (currentTime === duration) break;
+    }
+    
+    console.log(`亮度分析完成，共处理 ${brightnessData.length} 帧`);
+}
+
+// --- 辅助函数：跳转到指定时间 ---
+function seekToTime(time) {
+    return new Promise(resolve => {
+        const onSeeked = () => {
+            videoPlayer.removeEventListener('seeked', onSeeked);
+            resolve();
+        };
+        videoPlayer.addEventListener('seeked', onSeeked);
+        videoPlayer.currentTime = time;
+    });
+}
+
+// --- 辅助函数：计算平均亮度 ---
+function calculateAverageBrightness(imageData) {
+    const data = imageData.data;
+    let totalBrightness = 0;
+    let pixelCount = 0;
+    
+    for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        totalBrightness += (0.299 * r + 0.587 * g + 0.114 * b);
+        pixelCount++;
+    }
+    
+    return pixelCount > 0 ? totalBrightness / pixelCount : 0;
+}
+
+// --- 寻找局部最大值 ---
+function findLocalMaxima() {
+    localMaximaFrames = [];
+    
+    if (brightnessData.length < 3) return;
+    
+    for (let i = 1; i < brightnessData.length - 1; i++) {
+        const current = brightnessData[i].avgBrightness;
+        const prev = brightnessData[i - 1].avgBrightness;
+        const next = brightnessData[i + 1].avgBrightness;
+        
+        if (current > prev && current > next) {
+            localMaximaFrames.push({
+                time: brightnessData[i].frameTime,
+                value: current
+            });
+        }
+    }
+    
+    console.log(`找到 ${localMaximaFrames.length} 个局部最大值:`, localMaximaFrames);
+}
+
+// --- OCR分析 ---
+async function performOCRAnalysis() {
+    analysisResults = [];
+    
+    for (let i = 0; i < localMaximaFrames.length; i++) {
+        currentMaximaProcessingIndex = i;
+        const frameData = localMaximaFrames[i];
+        
+        const progress = 70 + (i / localMaximaFrames.length * 25); // 70%-95%
+        updateProgress(progress, `OCR处理进度: ${i + 1}/${localMaximaFrames.length} (时间: ${frameData.time.toFixed(2)}s)`);
+        
+        await seekToTime(frameData.time);
+        
+        const ocrResult = await performSingleOCR(frameData.time, i);
+        analysisResults.push(ocrResult);
+    }
+}
+
+// --- 单帧OCR处理（增强版） ---
+async function performSingleOCR(frameTime, occurrenceIndex, isTest = false) {
+    try {
+        processingCtx.drawImage(videoPlayer, 0, 0, videoNaturalWidth, videoNaturalHeight);
+        
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = ocrRect.width;
+        tempCanvas.height = ocrRect.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        
+        tempCtx.drawImage(
+            processingCanvas,
+            ocrRect.x, ocrRect.y, ocrRect.width, ocrRect.height,
+            0, 0, ocrRect.width, ocrRect.height
+        );
+        
+        // 使用增强OCR系统
+        const enhancedResult = await enhancedOCR.processImageWithMultipleStrategies(tempCanvas, tempCtx);
+        
+        console.log(`增强OCR结果 (时间${frameTime.toFixed(2)}s):`, enhancedResult);
+        
+        return {
+            occurrenceIndex: occurrenceIndex + 1,
+            frameTime: frameTime,
+            value: enhancedResult.value,
+            rawText: enhancedResult.rawText,
+            confidence: enhancedResult.confidence,
+            strategy: enhancedResult.strategyName,
+            hasDecimalPoint: enhancedResult.hasDecimalPoint,
+            score: enhancedResult.score
+        };
+        
+    } catch (error) {
+        console.error(`增强OCR处理失败 (时间${frameTime.toFixed(2)}s):`, error);
+        return {
+            occurrenceIndex: occurrenceIndex + 1,
+            frameTime: frameTime,
+            value: NaN,
+            rawText: '',
+            confidence: 0,
+            strategy: 'error',
+            hasDecimalPoint: false,
+            score: 0
+        };
+    }
+}
+
+// --- 显示OCR测试详细结果 ---
+function displayOCRTestDetails(result) {
+    ocrTestResult.style.display = 'block';
+    ocrTestResult.innerHTML = `
+        <strong>增强OCR测试结果:</strong><br>
+        <strong>最终结果:</strong><br>
+        - 识别数字: ${isNaN(result.value) ? 'N/A' : result.value}<br>
+        - 原始文本: "${result.rawText}"<br>
+        - 置信度: ${result.confidence.toFixed(1)}%<br>
+        - 使用策略: ${result.strategy}<br>
+        - 评分: ${result.score ? result.score.toFixed(3) : 'N/A'}<br>
+        - 包含小数点: ${result.hasDecimalPoint ? '是' : '否'}<br>
+        <br>
+        <strong>提示:</strong> 点击下方策略预览查看详细处理结果
+    `;
+}
+
+// --- 显示结果 ---
+function displayResults() {
+    let tableHTML = `
+        <table>
+            <thead>
+                <tr>
+                    <th>序号</th>
+                    <th>帧时间(s)</th>
+                    <th>识别数字</th>
+                    <th>原始文本</th>
+                    <th>置信度</th>
+                    <th>策略</th>
+                    <th>小数点</th>
+                    <th>评分</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    if (analysisResults.length === 0) {
+        tableHTML += '<tr><td colspan="8">无分析结果</td></tr>';
+    } else {
+        analysisResults.forEach(result => {
+            tableHTML += `
+                <tr>
+                    <td>${result.occurrenceIndex}</td>
+                    <td>${result.frameTime.toFixed(2)}</td>
+                    <td>${isNaN(result.value) ? 'N/A' : result.value}</td>
+                    <td>${result.rawText || 'N/A'}</td>
+                    <td>${result.confidence ? result.confidence.toFixed(1) + '%' : 'N/A'}</td>
+                    <td>${result.strategy || 'N/A'}</td>
+                    <td>${result.hasDecimalPoint ? '✓' : '✗'}</td>
+                    <td>${result.score ? result.score.toFixed(3) : 'N/A'}</td>
+                </tr>
+            `;
+        });
+    }
+    
+    tableHTML += '</tbody></table>';
+    resultsTableContainer.innerHTML = tableHTML;
+    
+    createResultChart();
+}
+
+// --- 创建结果图表 ---
+function createResultChart() {
+    if (chartInstance) chartInstance.destroy();
+    
+    const validResults = analysisResults.filter(r => !isNaN(r.value));
+    
+    if (validResults.length === 0) {
+        resultsChartCtx.clearRect(0, 0, resultsChartCtx.canvas.width, resultsChartCtx.canvas.height);
+        return;
+    }
+    
+    chartInstance = new Chart(resultsChartCtx, {
+        type: 'scatter',
+        data: {
+            datasets: [{
+                label: '识别数字',
+                data: validResults.map(r => ({ x: r.occurrenceIndex, y: r.value })),
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.6)',
+                showLine: true,
+                pointRadius: 6
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: { display: true, text: '出现次序' },
+                    ticks: { stepSize: 1 }
+                },
+                y: {
+                    title: { display: true, text: '识别数字' }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const pointData = validResults[context.dataIndex];
+                            return `数字: ${context.parsed.y} (时间: ${pointData.frameTime.toFixed(2)}s, 策略: ${pointData.strategy})`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+// --- 初始化 ---
+window.addEventListener('load', () => {
+    initializeOCR();
+    updateDebugInfo();
+});
