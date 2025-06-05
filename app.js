@@ -782,23 +782,44 @@ async function analyzeBrightness() {
 }
 
 // --- 智能峰值检测 ---
+// --- 智能峰值检测 ---
 function findLocalMaxima() {
     localMaximaFrames = [];
     
+    // 如果数据点过少，直接退到全局最大值
     if (brightnessData.length < 10) {
-        console.log('数据点太少，无法进行可靠的峰值检测');
+        console.warn('数据点太少，使用全局最大亮度帧作为峰值回退');
+        const maxItem = brightnessData.reduce((p, c) => c.avgBrightness > p.avgBrightness ? c : p, brightnessData[0]);
+        localMaximaFrames.push({
+            time: maxItem.frameTime,
+            value: maxItem.avgBrightness,
+            // 可以加上一个标记
+            fallback: true
+        });
         return;
     }
     
     const smoothedValues = brightnessData.map(d => d.avgBrightness);
     const sensitivity = peakSensitivity.value;
     
-    // 使用智能峰值检测器
+    // 使用我们封装的智能峰值检测器
     const peaks = PeakDetector.findPeaks(smoothedValues, {
         sensitivity: sensitivity
     });
     
-    // 转换为localMaximaFrames格式
+    // 如果没有检测到任何峰值，也退到全局最大
+    if (peaks.length === 0) {
+        console.warn('没有局部峰值，使用全局最大亮度帧作为峰值回退');
+        const maxItem = brightnessData.reduce((p, c) => c.avgBrightness > p.avgBrightness ? c : p, brightnessData[0]);
+        localMaximaFrames.push({
+            time: maxItem.frameTime,
+            value: maxItem.avgBrightness,
+            fallback: true
+        });
+        return;
+    }
+    
+    // 正常把所有候选峰值转成 localMaximaFrames
     localMaximaFrames = peaks.map(peak => ({
         frameNumber: peak.index,
         time: brightnessData[peak.index].frameTime,
@@ -807,9 +828,8 @@ function findLocalMaxima() {
         significance: peak.significance
     }));
     
-    console.log(`智能峰值检测完成: 检测到${localMaximaFrames.length}个可靠峰值`);
+    console.log(`智能峰值检测完成: 检测到 ${localMaximaFrames.length} 个可靠峰值`, localMaximaFrames);
 }
-
 // --- 完整分析流程 ---
 async function performCompleteAnalysis() {
     try {
