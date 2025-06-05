@@ -1,4 +1,4 @@
-// app.js - 完全重构版本
+// app.js - 带预览功能的完整版本
 
 // --- DOM 元素获取 ---
 const videoUpload = document.getElementById('videoUpload');
@@ -8,10 +8,24 @@ const drawingCtx = drawingCanvas.getContext('2d');
 const processingCanvas = document.getElementById('processingCanvas');
 const processingCtx = processingCanvas.getContext('2d');
 const startAnalysisBtn = document.getElementById('startAnalysisBtn');
+const refreshPreviewBtn = document.getElementById('refreshPreviewBtn');
 const statusMessage = document.getElementById('statusMessage');
 const debugInfo = document.getElementById('debugInfo');
 const resultsTableContainer = document.getElementById('resultsTableContainer');
 const resultsChartCtx = document.getElementById('resultsChart').getContext('2d');
+
+// 预览相关元素
+const brightnessPreviewCanvas = document.getElementById('brightnessPreviewCanvas');
+const brightnessPreviewCtx = brightnessPreviewCanvas.getContext('2d');
+const brightnessPreviewInfo = document.getElementById('brightnessPreviewInfo');
+
+const ocrPreviewCanvas = document.getElementById('ocrPreviewCanvas');
+const ocrPreviewCtx = ocrPreviewCanvas.getContext('2d');
+const ocrPreviewInfo = document.getElementById('ocrPreviewInfo');
+
+const ocrProcessedPreviewCanvas = document.getElementById('ocrProcessedPreviewCanvas');
+const ocrProcessedPreviewCtx = ocrProcessedPreviewCanvas.getContext('2d');
+const ocrProcessedPreviewInfo = document.getElementById('ocrProcessedPreviewInfo');
 
 // --- 全局状态变量 ---
 let videoFile = null;
@@ -45,8 +59,158 @@ function updateDebugInfo() {
         画布内部尺寸: ${drawingCanvas.width} × ${drawingCanvas.height}<br>
         画布显示尺寸: ${drawingCanvas.style.width} × ${drawingCanvas.style.height}<br>
         当前模式: ${currentMode}<br>
-        亮度区域: ${brightnessRect ? `${brightnessRect.x},${brightnessRect.y},${brightnessRect.width},${brightnessRect.height}` : '未定义'}<br>
-        OCR区域: ${ocrRect ? `${ocrRect.x},${ocrRect.y},${ocrRect.width},${ocrRect.height}` : '未定义'}
+        亮度区域: ${brightnessRect ? `${Math.round(brightnessRect.x)},${Math.round(brightnessRect.y)},${Math.round(brightnessRect.width)},${Math.round(brightnessRect.height)}` : '未定义'}<br>
+        OCR区域: ${ocrRect ? `${Math.round(ocrRect.x)},${Math.round(ocrRect.y)},${Math.round(ocrRect.width)},${Math.round(ocrRect.height)}` : '未定义'}
+    `;
+}
+
+// --- 预览更新函数 ---
+function updatePreviews() {
+    if (!videoFile) return;
+    
+    // 确保视频当前帧已绘制到处理画布
+    processingCtx.drawImage(videoPlayer, 0, 0, videoNaturalWidth, videoNaturalHeight);
+    
+    // 更新亮度区域预览
+    updateBrightnessPreview();
+    
+    // 更新OCR区域预览
+    updateOcrPreview();
+}
+
+function updateBrightnessPreview() {
+    if (!brightnessRect) {
+        brightnessPreviewCtx.clearRect(0, 0, brightnessPreviewCanvas.width, brightnessPreviewCanvas.height);
+        brightnessPreviewCtx.fillStyle = '#f0f0f0';
+        brightnessPreviewCtx.fillRect(0, 0, brightnessPreviewCanvas.width, brightnessPreviewCanvas.height);
+        brightnessPreviewCtx.fillStyle = '#999';
+        brightnessPreviewCtx.font = '12px Arial';
+        brightnessPreviewCtx.textAlign = 'center';
+        brightnessPreviewCtx.fillText('未定义', brightnessPreviewCanvas.width/2, brightnessPreviewCanvas.height/2);
+        brightnessPreviewInfo.textContent = '未定义区域';
+        return;
+    }
+    
+    // 绘制亮度区域到预览画布
+    const scale = Math.min(
+        brightnessPreviewCanvas.width / brightnessRect.width,
+        brightnessPreviewCanvas.height / brightnessRect.height
+    );
+    
+    const previewWidth = brightnessRect.width * scale;
+    const previewHeight = brightnessRect.height * scale;
+    const offsetX = (brightnessPreviewCanvas.width - previewWidth) / 2;
+    const offsetY = (brightnessPreviewCanvas.height - previewHeight) / 2;
+    
+    brightnessPreviewCtx.clearRect(0, 0, brightnessPreviewCanvas.width, brightnessPreviewCanvas.height);
+    brightnessPreviewCtx.drawImage(
+        processingCanvas,
+        brightnessRect.x, brightnessRect.y, brightnessRect.width, brightnessRect.height,
+        offsetX, offsetY, previewWidth, previewHeight
+    );
+    
+    // 计算当前区域的平均亮度
+    const imageData = processingCtx.getImageData(
+        brightnessRect.x, brightnessRect.y, brightnessRect.width, brightnessRect.height
+    );
+    const avgBrightness = calculateAverageBrightness(imageData);
+    
+    brightnessPreviewInfo.innerHTML = `
+        区域: ${Math.round(brightnessRect.width)}×${Math.round(brightnessRect.height)}px<br>
+        当前亮度: ${avgBrightness.toFixed(1)}
+    `;
+}
+
+function updateOcrPreview() {
+    if (!ocrRect) {
+        ocrPreviewCtx.clearRect(0, 0, ocrPreviewCanvas.width, ocrPreviewCanvas.height);
+        ocrPreviewCtx.fillStyle = '#f0f0f0';
+        ocrPreviewCtx.fillRect(0, 0, ocrPreviewCanvas.width, ocrPreviewCanvas.height);
+        ocrPreviewCtx.fillStyle = '#999';
+        ocrPreviewCtx.font = '12px Arial';
+        ocrPreviewCtx.textAlign = 'center';
+        ocrPreviewCtx.fillText('未定义', ocrPreviewCanvas.width/2, ocrPreviewCanvas.height/2);
+        ocrPreviewInfo.textContent = '未定义区域';
+        
+        // 清空处理结果预览
+        ocrProcessedPreviewCtx.clearRect(0, 0, ocrProcessedPreviewCanvas.width, ocrProcessedPreviewCanvas.height);
+        ocrProcessedPreviewCtx.fillStyle = '#f0f0f0';
+        ocrProcessedPreviewCtx.fillRect(0, 0, ocrProcessedPreviewCanvas.width, ocrProcessedPreviewCanvas.height);
+        ocrProcessedPreviewCtx.fillStyle = '#999';
+        ocrProcessedPreviewCtx.font = '12px Arial';
+        ocrProcessedPreviewCtx.textAlign = 'center';
+        ocrProcessedPreviewCtx.fillText('未处理', ocrProcessedPreviewCanvas.width/2, ocrProcessedPreviewCanvas.height/2);
+        ocrProcessedPreviewInfo.textContent = '未处理';
+        return;
+    }
+    
+    // 绘制OCR区域到预览画布
+    const scale = Math.min(
+        ocrPreviewCanvas.width / ocrRect.width,
+        ocrPreviewCanvas.height / ocrRect.height
+    );
+    
+    const previewWidth = ocrRect.width * scale;
+    const previewHeight = ocrRect.height * scale;
+    const offsetX = (ocrPreviewCanvas.width - previewWidth) / 2;
+    const offsetY = (ocrPreviewCanvas.height - previewHeight) / 2;
+    
+    ocrPreviewCtx.clearRect(0, 0, ocrPreviewCanvas.width, ocrPreviewCanvas.height);
+    ocrPreviewCtx.drawImage(
+        processingCanvas,
+        ocrRect.x, ocrRect.y, ocrRect.width, ocrRect.height,
+        offsetX, offsetY, previewWidth, previewHeight
+    );
+    
+    ocrPreviewInfo.innerHTML = `
+        区域: ${Math.round(ocrRect.width)}×${Math.round(ocrRect.height)}px<br>
+        位置: (${Math.round(ocrRect.x)}, ${Math.round(ocrRect.y)})
+    `;
+    
+    // 生成预处理结果预览
+    updateOcrProcessedPreview();
+}
+
+function updateOcrProcessedPreview() {
+    if (!ocrRect) return;
+    
+    // 创建临时画布用于预处理
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = ocrRect.width;
+    tempCanvas.height = ocrRect.height;
+    const tempCtx = tempCanvas.getContext('2d');
+    
+    // 复制OCR区域到临时画布
+    tempCtx.drawImage(
+        processingCanvas,
+        ocrRect.x, ocrRect.y, ocrRect.width, ocrRect.height,
+        0, 0, ocrRect.width, ocrRect.height
+    );
+    
+    // 进行预处理
+    preprocessImageForOCR(tempCtx, tempCanvas);
+    
+    // 将预处理结果绘制到预览画布
+    const scale = Math.min(
+        ocrProcessedPreviewCanvas.width / ocrRect.width,
+        ocrProcessedPreviewCanvas.height / ocrRect.height
+    );
+    
+    const previewWidth = ocrRect.width * scale;
+    const previewHeight = ocrRect.height * scale;
+    const offsetX = (ocrProcessedPreviewCanvas.width - previewWidth) / 2;
+    const offsetY = (ocrProcessedPreviewCanvas.height - previewHeight) / 2;
+    
+    ocrProcessedPreviewCtx.clearRect(0, 0, ocrProcessedPreviewCanvas.width, ocrProcessedPreviewCanvas.height);
+    ocrProcessedPreviewCtx.drawImage(
+        tempCanvas,
+        0, 0, ocrRect.width, ocrRect.height,
+        offsetX, offsetY, previewWidth, previewHeight
+    );
+    
+    ocrProcessedPreviewInfo.innerHTML = `
+        二值化处理完成<br>
+        白色=数字，黑色=背景
     `;
 }
 
@@ -94,6 +258,11 @@ function syncCanvasWithVideo() {
     
     console.log(`画布同步完成: 内部${videoNaturalWidth}×${videoNaturalHeight}, 显示${videoDisplayWidth}×${videoDisplayHeight}`);
     updateDebugInfo();
+    
+    // 如果视频已加载，更新预览
+    if (videoFile && !videoPlayer.paused) {
+        setTimeout(updatePreviews, 100);
+    }
 }
 
 // --- 坐标转换函数 ---
@@ -166,14 +335,38 @@ videoPlayer.addEventListener('loadedmetadata', () => {
         statusMessage.textContent = '视频已加载。请在视频上绘制亮度分析区域（红色框）。';
         currentMode = 'brightness';
         updateDebugInfo();
+        updatePreviews(); // 初始化预览
     }, 100);
 });
 
-// 3. 视频尺寸变化时重新同步
+// 3. 视频播放状态变化时更新预览
+videoPlayer.addEventListener('timeupdate', () => {
+    if (videoFile && (brightnessRect || ocrRect)) {
+        updatePreviews();
+    }
+});
+
+videoPlayer.addEventListener('seeked', () => {
+    if (videoFile && (brightnessRect || ocrRect)) {
+        setTimeout(updatePreviews, 50); // 稍微延迟确保帧已渲染
+    }
+});
+
+// 4. 视频尺寸变化时重新同步
 videoPlayer.addEventListener('resize', syncCanvasWithVideo);
 window.addEventListener('resize', syncCanvasWithVideo);
 
-// 4. 鼠标按下开始绘制
+// 5. 刷新预览按钮
+refreshPreviewBtn.addEventListener('click', () => {
+    if (videoFile) {
+        updatePreviews();
+        statusMessage.textContent = '预览已刷新。';
+    } else {
+        statusMessage.textContent = '请先上传视频。';
+    }
+});
+
+// 6. 鼠标按下开始绘制
 drawingCanvas.addEventListener('mousedown', (e) => {
     if (!videoFile || currentMode === 'analyzing') return;
     
@@ -185,7 +378,7 @@ drawingCanvas.addEventListener('mousedown', (e) => {
     clearAndRedrawRects();
 });
 
-// 5. 鼠标移动时预览矩形
+// 7. 鼠标移动时预览矩形
 drawingCanvas.addEventListener('mousemove', (e) => {
     if (!isDrawing || !videoFile || currentMode === 'analyzing') return;
     
@@ -204,7 +397,7 @@ drawingCanvas.addEventListener('mousemove', (e) => {
     );
 });
 
-// 6. 鼠标松开完成绘制
+// 8. 鼠标松开完成绘制
 drawingCanvas.addEventListener('mouseup', (e) => {
     if (!isDrawing || !videoFile || currentMode === 'analyzing') return;
     
@@ -242,9 +435,10 @@ drawingCanvas.addEventListener('mouseup', (e) => {
     
     clearAndRedrawRects();
     updateDebugInfo();
+    updatePreviews(); // 更新预览
 });
 
-// 7. 开始分析按钮
+// 9. 开始分析按钮
 startAnalysisBtn.addEventListener('click', async () => {
     if (!brightnessRect || !ocrRect || !videoFile) {
         alert('请先完整定义所有分析区域。');
@@ -276,6 +470,7 @@ function resetAnalysisState() {
     resultsTableContainer.innerHTML = "";
     clearAndRedrawRects();
     updateDebugInfo();
+    updatePreviews(); // 重置预览
 }
 
 // --- 完整分析流程 ---
