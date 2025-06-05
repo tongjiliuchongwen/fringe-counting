@@ -14,8 +14,9 @@
         }
         #videoContainer {
             position: relative;
-            width: 640px; /* 根据需要调整 */
-            height: 360px; /* 根据需要调整 */
+            /* 这里原本设定了固定尺寸，如果你想要自动适配视频本身大小，可以去掉或者调整下面两行 */
+            width: 640px;
+            height: 360px;
             margin-bottom: 10px;
             border: 1px solid #ccc;
         }
@@ -27,7 +28,6 @@
             height: 100%;
         }
         #drawingCanvas {
-            /* border: 1px solid black;  Removed border here as container has one */
             z-index: 10; /* 使Canvas在视频之上 */
             cursor: crosshair;
         }
@@ -73,8 +73,8 @@
             background-color: #f0f0f0;
         }
         #chartContainer {
-            width: 100%; /* Responsive width */
-            max-width: 600px; /* Max width for larger screens */
+            width: 100%; /* 响应式宽度 */
+            max-width: 600px; /* 大屏幕下的最大宽度 */
             height: 400px;
             margin-top:20px;
         }
