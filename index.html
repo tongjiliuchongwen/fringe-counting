@@ -2,25 +2,40 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <title>视频分析工具 - 重构版</title>
+    <title>视频分析工具 - 带预览功能</title>
     <style>
         body {
             font-family: sans-serif;
             margin: 20px;
             background-color: #f4f4f4;
         }
-        h1, h2 {
+        h1, h2, h3 {
             color: #333;
+        }
+        .main-container {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        .left-panel {
+            flex: 1;
+        }
+        .right-panel {
+            width: 320px;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         #videoContainer {
             position: relative;
-            display: inline-block; /* 让容器自适应内容大小 */
+            display: inline-block;
             margin-bottom: 10px;
             border: 2px solid #ccc;
         }
         #videoPlayer {
             display: block;
-            max-width: 800px; /* 限制最大显示宽度 */
+            max-width: 800px;
             height: auto;
         }
         #drawingCanvas {
@@ -30,6 +45,35 @@
             z-index: 10;
             cursor: crosshair;
             pointer-events: auto;
+        }
+        .preview-container {
+            margin-bottom: 20px;
+        }
+        .preview-item {
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .preview-header {
+            background-color: #f8f9fa;
+            padding: 8px 12px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .preview-content {
+            padding: 10px;
+            text-align: center;
+        }
+        .preview-canvas {
+            border: 1px solid #ccc;
+            max-width: 100%;
+            height: auto;
+        }
+        .preview-info {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #666;
         }
         #controls, #results {
             margin-top: 20px;
@@ -50,6 +94,11 @@
         #controls button:disabled {
             background-color: #ccc;
             cursor: not-allowed;
+        }
+        #refreshPreviewBtn {
+            background-color: #28a745;
+            margin-left: 0;
+            margin-top: 10px;
         }
         #controls input[type="file"] {
             padding: 5px;
@@ -86,29 +135,76 @@
             font-size: 12px;
             margin-top: 10px;
         }
+        .no-preview {
+            color: #999;
+            font-style: italic;
+            padding: 20px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
-    <h1>视频分析工具 - 重构版</h1>
+    <h1>视频分析工具 - 带预览功能</h1>
 
-    <div id="controls">
-        <input type="file" id="videoUpload" accept="video/*">
-        <button id="startAnalysisBtn" disabled>开始完整分析</button>
-        <p id="statusMessage">请先上传视频。</p>
-        <div id="debugInfo"></div>
-    </div>
+    <div class="main-container">
+        <div class="left-panel">
+            <div id="controls">
+                <input type="file" id="videoUpload" accept="video/*">
+                <button id="startAnalysisBtn" disabled>开始完整分析</button>
+                <p id="statusMessage">请先上传视频。</p>
+                <div id="debugInfo"></div>
+            </div>
 
-    <div id="videoContainer">
-        <video id="videoPlayer" controls></video>
-        <canvas id="drawingCanvas"></canvas>
-    </div>
-    <canvas id="processingCanvas" style="display:none;"></canvas>
+            <div id="videoContainer">
+                <video id="videoPlayer" controls></video>
+                <canvas id="drawingCanvas"></canvas>
+            </div>
+            <canvas id="processingCanvas" style="display:none;"></canvas>
 
-    <div id="results">
-        <h2>分析结果</h2>
-        <div id="resultsTableContainer"></div>
-        <div id="chartContainer">
-            <canvas id="resultsChart"></canvas>
+            <div id="results">
+                <h2>分析结果</h2>
+                <div id="resultsTableContainer"></div>
+                <div id="chartContainer">
+                    <canvas id="resultsChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <h3>区域预览</h3>
+            <button id="refreshPreviewBtn">刷新预览</button>
+            
+            <div class="preview-container">
+                <div class="preview-item">
+                    <div class="preview-header" style="color: #dc3545;">
+                        🔴 亮度分析区域
+                    </div>
+                    <div class="preview-content">
+                        <canvas id="brightnessPreviewCanvas" class="preview-canvas" width="150" height="100"></canvas>
+                        <div class="preview-info" id="brightnessPreviewInfo">未定义区域</div>
+                    </div>
+                </div>
+
+                <div class="preview-item">
+                    <div class="preview-header" style="color: #007bff;">
+                        🔵 OCR识别区域
+                    </div>
+                    <div class="preview-content">
+                        <canvas id="ocrPreviewCanvas" class="preview-canvas" width="150" height="100"></canvas>
+                        <div class="preview-info" id="ocrPreviewInfo">未定义区域</div>
+                    </div>
+                </div>
+
+                <div class="preview-item">
+                    <div class="preview-header" style="color: #6f42c1;">
+                        🟣 OCR预处理结果
+                    </div>
+                    <div class="preview-content">
+                        <canvas id="ocrProcessedPreviewCanvas" class="preview-canvas" width="150" height="100"></canvas>
+                        <div class="preview-info" id="ocrProcessedPreviewInfo">未处理</div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
