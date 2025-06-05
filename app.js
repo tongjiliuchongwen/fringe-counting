@@ -16,8 +16,8 @@ let brightnessRect = null; // 视频原始像素坐标
 let ocrRect = null;        // 视频原始像素坐标
 let isDrawing = false;
 let currentDrawingStart = {};
-let videoNaturalWidth = 0;  // 视频原始宽度
-let videoNaturalHeight = 0; // 视频原始高度
+let videoNaturalWidth = 0;
+let videoNaturalHeight = 0;
 
 let brightnessData = [];
 let analysisResults = [];
@@ -25,6 +25,14 @@ let currentMode = 'brightness'; // 'brightness', 'ocr_define', 'ready_to_analyze
 let localMaximaFrames = [];
 let currentMaximaProcessingIndex = 0;
 let chartInstance = null;
+
+// --- 全屏区域选择相关 ---
+let fullscreenContainer = null;
+let fullscreenCanvas = null;
+let fullscreenCtx = null;
+let fullscreenVideo = null;
+let isInFullscreenMode = false;
+let originalVideoCurrentTime = 0;
 
 // --- Tesseract Worker ---
 let ocrWorker = null;
@@ -42,7 +50,7 @@ async function initializeOCR() {
         });
         await ocrWorker.loadLanguage('eng');
         await ocrWorker.initialize('eng');
-        statusMessage.textContent = videoFile ? 'OCR 服务已就绪。请在视频上绘制亮度分析区域。' : 'OCR 服务已就绪。请上传视频。';
+        statusMessage.textContent = videoFile ? 'OCR 服务已就绪。点击下方按钮进入全屏模式选择区域。' : 'OCR 服务已就绪。请上传视频。';
         console.log("OCR Worker initialized");
     } catch (error) {
         console.error("OCR Initialization Error:", error);
@@ -53,25 +61,311 @@ async function initializeOCR() {
 
 initializeOCR();
 
-// --- 核心坐标转换函数 ---
-function getVideoCoordinatesFromMouse(event) {
-    const rect = drawingCanvas.getBoundingClientRect();
-    
-    // 获取鼠标在canvas显示区域的相对位置 (0-1)
-    const relativeX = (event.clientX - rect.left) / rect.width;
-    const relativeY = (event.clientY - rect.top) / rect.height;
-    
-    // 转换为视频原始像素坐标
-    const videoX = relativeX * videoNaturalWidth;
-    const videoY = relativeY * videoNaturalHeight;
-    
-    return { x: videoX, y: videoY };
+// --- 全屏区域选择功能 ---
+function createFullscreenInterface() {
+    fullscreenContainer = document.createElement('div');
+    fullscreenContainer.id = 'fullscreenContainer';
+    fullscreenContainer.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: black;
+        z-index: 50000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    `;
+
+    // 创建视频元素（克隆原视频的设置）
+    fullscreenVideo = document.createElement('video');
+    fullscreenVideo.src = videoPlayer.src;
+    fullscreenVideo.currentTime = videoPlayer.currentTime;
+    fullscreenVideo.style.cssText = `
+        max-width: 90vw;
+        max-height: 80vh;
+        object-fit: contain;
+    `;
+
+    // 创建覆盖在视频上的canvas
+    fullscreenCanvas = document.createElement('canvas');
+    fullscreenCanvas.style.cssText = `
+        position: absolute;
+        cursor: crosshair;
+        pointer-events: all;
+    `;
+    fullscreenCtx = fullscreenCanvas.getContext('2d');
+
+    // 创建状态显示
+    const statusDiv = document.createElement('div');
+    statusDiv.id = 'fullscreenStatus';
+    statusDiv.style.cssText = `
+        position: absolute;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0,0,0,0.8);
+        color: white;
+        padding: 15px 30px;
+        border-radius: 10px;
+        font-size: 18px;
+        font-family: Arial, sans-serif;
+        text-align: center;
+        z-index: 51000;
+    `;
+
+    // 创建帮助信息
+    const helpDiv = document.createElement('div');
+    helpDiv.style.cssText = `
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0,0,0,0.8);
+        color: white;
+        padding: 10px 20px;
+        border-radius: 5px;
+        font-size: 14px;
+        font-family: Arial, sans-serif;
+        text-align: center;
+    `;
+    helpDiv.innerHTML = '拖拽鼠标选择区域 | ESC键退出全屏';
+
+    // 创建容器包装视频和canvas
+    const videoContainer = document.createElement('div');
+    videoContainer.style.cssText = `
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    `;
+
+    videoContainer.appendChild(fullscreenVideo);
+    videoContainer.appendChild(fullscreenCanvas);
+
+    fullscreenContainer.appendChild(statusDiv);
+    fullscreenContainer.appendChild(videoContainer);
+    fullscreenContainer.appendChild(helpDiv);
+
+    document.body.appendChild(fullscreenContainer);
+
+    return { statusDiv, videoContainer };
 }
 
+function enterFullscreenMode() {
+    if (isInFullscreenMode) return;
+
+    originalVideoCurrentTime = videoPlayer.currentTime;
+    isInFullscreenMode = true;
+
+    const { statusDiv } = createFullscreenInterface();
+
+    // 等待视频加载
+    fullscreenVideo.addEventListener('loadedmetadata', () => {
+        updateFullscreenLayout();
+        setupFullscreenEventListeners(statusDiv);
+        updateFullscreenStatus(statusDiv);
+    });
+
+    fullscreenVideo.load();
+}
+
+function updateFullscreenLayout() {
+    // 计算视频在屏幕上的实际显示尺寸
+    const videoRect = fullscreenVideo.getBoundingClientRect();
+    
+    // 设置canvas覆盖整个视频显示区域
+    fullscreenCanvas.style.left = `${videoRect.left}px`;
+    fullscreenCanvas.style.top = `${videoRect.top}px`;
+    fullscreenCanvas.style.width = `${videoRect.width}px`;
+    fullscreenCanvas.style.height = `${videoRect.height}px`;
+    
+    // 设置canvas内部分辨率等于视频原始分辨率
+    fullscreenCanvas.width = videoNaturalWidth;
+    fullscreenCanvas.height = videoNaturalHeight;
+
+    console.log('全屏布局更新:', {
+        视频显示尺寸: `${videoRect.width}x${videoRect.height}`,
+        Canvas内部尺寸: `${fullscreenCanvas.width}x${fullscreenCanvas.height}`,
+        缩放比例: `${videoNaturalWidth/videoRect.width} x ${videoNaturalHeight/videoRect.height}`
+    });
+}
+
+function setupFullscreenEventListeners(statusDiv) {
+    let isDrawing = false;
+    let startCoords = {};
+
+    // 获取准确的视频坐标
+    function getVideoCoords(event) {
+        const videoRect = fullscreenVideo.getBoundingClientRect();
+        const canvasRect = fullscreenCanvas.getBoundingClientRect();
+        
+        const relativeX = (event.clientX - canvasRect.left) / canvasRect.width;
+        const relativeY = (event.clientY - canvasRect.top) / canvasRect.height;
+        
+        return {
+            x: relativeX * videoNaturalWidth,
+            y: relativeY * videoNaturalHeight
+        };
+    }
+
+    function clearCanvas() {
+        fullscreenCtx.clearRect(0, 0, fullscreenCanvas.width, fullscreenCanvas.height);
+        
+        // 重绘已有的矩形
+        if (brightnessRect) {
+            drawRect(brightnessRect, 'rgba(255,0,0,0.8)', 3, '亮度区域');
+        }
+        if (ocrRect) {
+            drawRect(ocrRect, 'rgba(0,0,255,0.8)', 3, '数字区域');
+        }
+    }
+
+    function drawRect(rect, color, lineWidth, label) {
+        fullscreenCtx.strokeStyle = color;
+        fullscreenCtx.lineWidth = lineWidth;
+        fullscreenCtx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+        
+        if (label) {
+            fullscreenCtx.fillStyle = color;
+            fullscreenCtx.font = '24px Arial';
+            fullscreenCtx.fillText(label, rect.x, Math.max(rect.y - 10, 30));
+        }
+    }
+
+    function updateFullscreenStatus(statusDiv) {
+        let statusText = '';
+        if (currentMode === 'brightness') {
+            statusText = '步骤 1/2: 请选择亮度分析区域（红色框）';
+        } else if (currentMode === 'ocr_define') {
+            statusText = '步骤 2/2: 请选择数字识别区域（蓝色框）';
+        }
+        statusDiv.textContent = statusText;
+    }
+
+    // 鼠标事件
+    fullscreenCanvas.addEventListener('mousedown', (e) => {
+        if (currentMode === 'analyzing') return;
+        
+        isDrawing = true;
+        startCoords = getVideoCoords(e);
+        clearCanvas();
+    });
+
+    fullscreenCanvas.addEventListener('mousemove', (e) => {
+        if (!isDrawing || currentMode === 'analyzing') return;
+        
+        const currentCoords = getVideoCoords(e);
+        clearCanvas();
+        
+        // 绘制当前拖拽的矩形
+        const tempRect = {
+            x: Math.min(startCoords.x, currentCoords.x),
+            y: Math.min(startCoords.y, currentCoords.y),
+            width: Math.abs(currentCoords.x - startCoords.x),
+            height: Math.abs(currentCoords.y - startCoords.y)
+        };
+        
+        const color = currentMode === 'brightness' ? 'rgba(255,0,0,0.5)' : 'rgba(0,0,255,0.5)';
+        drawRect(tempRect, color, 2);
+    });
+
+    fullscreenCanvas.addEventListener('mouseup', (e) => {
+        if (!isDrawing || currentMode === 'analyzing') return;
+        
+        isDrawing = false;
+        const endCoords = getVideoCoords(e);
+        
+        const finalRect = {
+            x: Math.min(startCoords.x, endCoords.x),
+            y: Math.min(startCoords.y, endCoords.y),
+            width: Math.abs(endCoords.x - startCoords.x),
+            height: Math.abs(endCoords.y - startCoords.y)
+        };
+
+        // 检查区域大小
+        if (finalRect.width < 20 || finalRect.height < 20) {
+            alert('选择的区域太小，请重新选择');
+            clearCanvas();
+            return;
+        }
+
+        console.log(`全屏模式选择完成:`, finalRect);
+
+        if (currentMode === 'brightness') {
+            brightnessRect = finalRect;
+            currentMode = 'ocr_define';
+            updateFullscreenStatus(statusDiv);
+            clearCanvas();
+        } else if (currentMode === 'ocr_define') {
+            ocrRect = finalRect;
+            exitFullscreenMode();
+        }
+    });
+
+    // 键盘事件
+    function handleKeyDown(e) {
+        if (e.key === 'Escape') {
+            exitFullscreenMode();
+        }
+    }
+
+    document.addEventListener('keydown', handleKeyDown);
+
+    // 保存事件处理器引用以便清理
+    fullscreenContainer._cleanup = () => {
+        document.removeEventListener('keydown', handleKeyDown);
+    };
+
+    // 窗口大小变化时更新布局
+    window.addEventListener('resize', updateFullscreenLayout);
+
+    updateFullscreenStatus(statusDiv);
+    clearCanvas();
+}
+
+function exitFullscreenMode() {
+    if (!isInFullscreenMode) return;
+
+    isInFullscreenMode = false;
+
+    // 清理事件监听器
+    if (fullscreenContainer._cleanup) {
+        fullscreenContainer._cleanup();
+    }
+
+    // 移除全屏界面
+    if (fullscreenContainer) {
+        fullscreenContainer.remove();
+        fullscreenContainer = null;
+    }
+
+    // 恢复原视频时间
+    videoPlayer.currentTime = originalVideoCurrentTime;
+
+    // 更新状态
+    if (brightnessRect && ocrRect) {
+        currentMode = 'ready_to_analyze';
+        statusMessage.textContent = '区域选择完成！点击"开始完整分析"按钮。';
+        startAnalysisBtn.disabled = false;
+    } else if (brightnessRect) {
+        currentMode = 'ocr_define';
+        statusMessage.textContent = '亮度区域已选择，请继续选择数字识别区域。';
+    } else {
+        currentMode = 'brightness';
+        statusMessage.textContent = '请点击"选择分析区域"按钮重新开始。';
+    }
+
+    // 重绘普通canvas
+    clearAndRedrawRects();
+    updateDebugPanel();
+}
+
+// --- 普通模式的绘制函数 ---
 function drawVideoCoordinateRect(videoRect, strokeStyle, lineWidth = 2, label = '') {
     if (!videoRect) return;
-    
-    const rect = drawingCanvas.getBoundingClientRect();
     
     // 将视频坐标转换为canvas显示坐标
     const displayX = (videoRect.x / videoNaturalWidth) * drawingCanvas.width;
@@ -86,7 +380,7 @@ function drawVideoCoordinateRect(videoRect, strokeStyle, lineWidth = 2, label = 
     if (label) {
         drawingCtx.fillStyle = strokeStyle;
         drawingCtx.font = '14px Arial';
-        drawingCtx.fillText(label, displayX, displayY - 5);
+        drawingCtx.fillText(label, displayX, Math.max(displayY - 5, 15));
     }
 }
 
@@ -102,7 +396,7 @@ function clearAndRedrawRects() {
 }
 
 // --- 调试面板 ---
-function createOrUpdateDebugPanel() {
+function updateDebugPanel() {
     let debugPanel = document.getElementById('debugPanel');
     if (!debugPanel) {
         debugPanel = document.createElement('div');
@@ -123,88 +417,58 @@ function createOrUpdateDebugPanel() {
         document.body.appendChild(debugPanel);
     }
     
-    const rect = drawingCanvas.getBoundingClientRect();
     let info = `
         <strong>调试信息</strong><br>
         视频原始分辨率: ${videoNaturalWidth}×${videoNaturalHeight}<br>
-        Canvas显示尺寸: ${rect.width.toFixed(0)}×${rect.height.toFixed(0)}<br>
-        Canvas内部尺寸: ${drawingCanvas.width}×${drawingCanvas.height}<br>
         当前模式: ${currentMode}<br>
+        选择模式: 全屏精确选择<br>
     `;
     
     if (brightnessRect) {
-        info += `<br><strong>亮度区域 (视频像素):</strong><br>
-                 位置: (${brightnessRect.x.toFixed(1)}, ${brightnessRect.y.toFixed(1)})<br>
-                 尺寸: ${brightnessRect.width.toFixed(1)}×${brightnessRect.height.toFixed(1)}<br>`;
+        info += `<br><strong>亮度区域:</strong><br>
+                 位置: (${brightnessRect.x.toFixed(0)}, ${brightnessRect.y.toFixed(0)})<br>
+                 尺寸: ${brightnessRect.width.toFixed(0)}×${brightnessRect.height.toFixed(0)}<br>`;
     }
     
     if (ocrRect) {
-        info += `<br><strong>OCR区域 (视频像素):</strong><br>
-                 位置: (${ocrRect.x.toFixed(1)}, ${ocrRect.y.toFixed(1)})<br>
-                 尺寸: ${ocrRect.width.toFixed(1)}×${ocrRect.height.toFixed(1)}<br>`;
+        info += `<br><strong>OCR区域:</strong><br>
+                 位置: (${ocrRect.x.toFixed(0)}, ${ocrRect.y.toFixed(0)})<br>
+                 尺寸: ${ocrRect.width.toFixed(0)}×${ocrRect.height.toFixed(0)}<br>`;
     }
     
     debugPanel.innerHTML = info;
 }
 
-function createPreviewCanvas(id, title, videoRect) {
-    if (!videoRect) return;
+// --- 添加全屏选择按钮 ---
+function createRegionSelectionButton() {
+    let button = document.getElementById('regionSelectionBtn');
+    if (button) return button;
     
-    let previewCanvas = document.getElementById(id);
-    if (!previewCanvas) {
-        previewCanvas = document.createElement('canvas');
-        previewCanvas.id = id;
-        previewCanvas.style.cssText = `
-            position: fixed;
-            top: 10px;
-            right: ${id === 'brightnessPrev' ? '10px' : '220px'};
-            z-index: 10000;
-            border: 3px solid red;
-            background: #eee;
-        `;
-        document.body.appendChild(previewCanvas);
-        
-        // 添加标题
-        const label = document.createElement('div');
-        label.textContent = title;
-        label.style.cssText = `
-            position: fixed;
-            top: ${Math.max(150, videoRect.height + 20)}px;
-            right: ${id === 'brightnessPrev' ? '10px' : '220px'};
-            z-index: 10001;
-            background: yellow;
-            padding: 2px 5px;
-            font-size: 12px;
-            border: 1px solid black;
-        `;
-        document.body.appendChild(label);
-    }
+    button = document.createElement('button');
+    button.id = 'regionSelectionBtn';
+    button.textContent = '选择分析区域（全屏模式）';
+    button.style.cssText = `
+        background: #007bff;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 16px;
+        margin: 10px 5px;
+    `;
     
-    // 设置预览canvas尺寸
-    const maxSize = 150;
-    const scale = Math.min(maxSize / videoRect.width, maxSize / videoRect.height, 1);
-    previewCanvas.width = Math.max(videoRect.width * scale, 50);
-    previewCanvas.height = Math.max(videoRect.height * scale, 20);
+    button.addEventListener('click', () => {
+        if (!videoFile) {
+            alert('请先上传视频');
+            return;
+        }
+        enterFullscreenMode();
+    });
     
-    // 绘制当前视频帧的对应区域
-    if (videoPlayer.readyState >= 2) {
-        // 创建临时canvas以获取视频帧
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = videoNaturalWidth;
-        tempCanvas.height = videoNaturalHeight;
-        const tempCtx = tempCanvas.getContext('2d');
-        
-        tempCtx.drawImage(videoPlayer, 0, 0, videoNaturalWidth, videoNaturalHeight);
-        
-        // 截取并绘制到预览canvas
-        const previewCtx = previewCanvas.getContext('2d');
-        previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-        previewCtx.drawImage(
-            tempCanvas,
-            videoRect.x, videoRect.y, videoRect.width, videoRect.height,
-            0, 0, previewCanvas.width, previewCanvas.height
-        );
-    }
+    // 插入到开始分析按钮前面
+    startAnalysisBtn.parentNode.insertBefore(button, startAnalysisBtn);
+    return button;
 }
 
 // --- 事件处理 ---
@@ -231,18 +495,16 @@ videoUpload.addEventListener('change', (event) => {
     clearAndRedrawRects();
     
     // 清除调试元素
-    ['debugPanel', 'brightnessPrev', 'ocrPrev'].forEach(id => {
+    ['debugPanel'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.remove();
     });
 });
 
 videoPlayer.addEventListener('loadedmetadata', () => {
-    // 获取视频原始尺寸
     videoNaturalWidth = videoPlayer.videoWidth;
     videoNaturalHeight = videoPlayer.videoHeight;
     
-    // 设置canvas内部尺寸等于视频尺寸
     drawingCanvas.width = videoNaturalWidth;
     drawingCanvas.height = videoNaturalHeight;
     processingCanvas.width = videoNaturalWidth;
@@ -250,11 +512,13 @@ videoPlayer.addEventListener('loadedmetadata', () => {
     
     console.log(`视频加载完成: ${videoNaturalWidth}×${videoNaturalHeight}`);
     
-    statusMessage.textContent = '视频已加载。请在视频上绘制亮度分析区域。';
+    statusMessage.textContent = '视频已加载。请点击"选择分析区域"按钮进入全屏选择模式。';
     currentMode = 'brightness';
     startAnalysisBtn.disabled = true;
+    
     clearAndRedrawRects();
-    createOrUpdateDebugPanel();
+    updateDebugPanel();
+    createRegionSelectionButton();
 });
 
 videoPlayer.addEventListener('error', (e) => {
@@ -262,77 +526,9 @@ videoPlayer.addEventListener('error', (e) => {
     statusMessage.textContent = '视频加载失败。请检查文件格式或选择其他文件。';
 });
 
-// 鼠标事件
-drawingCanvas.addEventListener('mousedown', (e) => {
-    if (!videoFile || currentMode === 'analyzing') return;
-    
-    isDrawing = true;
-    const coords = getVideoCoordinatesFromMouse(e);
-    currentDrawingStart = coords;
-    
-    console.log(`鼠标按下: 视频坐标 (${coords.x.toFixed(1)}, ${coords.y.toFixed(1)})`);
-    clearAndRedrawRects();
-});
-
-drawingCanvas.addEventListener('mousemove', (e) => {
-    if (!isDrawing || !videoFile || currentMode === 'analyzing') return;
-    
-    const coords = getVideoCoordinatesFromMouse(e);
-    clearAndRedrawRects();
-    
-    // 绘制当前拖拽的矩形
-    const tempRect = {
-        x: Math.min(currentDrawingStart.x, coords.x),
-        y: Math.min(currentDrawingStart.y, coords.y),
-        width: Math.abs(coords.x - currentDrawingStart.x),
-        height: Math.abs(coords.y - currentDrawingStart.y)
-    };
-    
-    const strokeStyle = (currentMode === 'brightness') ? 'rgba(255,0,0,0.5)' : 'rgba(0,0,255,0.5)';
-    drawVideoCoordinateRect(tempRect, strokeStyle, 1);
-});
-
-drawingCanvas.addEventListener('mouseup', (e) => {
-    if (!isDrawing || !videoFile || currentMode === 'analyzing') return;
-    
-    isDrawing = false;
-    const coords = getVideoCoordinatesFromMouse(e);
-    
-    const drawnRect = {
-        x: Math.min(currentDrawingStart.x, coords.x),
-        y: Math.min(currentDrawingStart.y, coords.y),
-        width: Math.abs(coords.x - currentDrawingStart.x),
-        height: Math.abs(coords.y - currentDrawingStart.y)
-    };
-    
-    console.log(`绘制完成: 视频坐标`, drawnRect);
-    
-    if (drawnRect.width < 10 || drawnRect.height < 10) {
-        console.log("区域太小，已忽略");
-        clearAndRedrawRects();
-        return;
-    }
-    
-    if (currentMode === 'brightness') {
-        brightnessRect = drawnRect;
-        currentMode = 'ocr_define';
-        statusMessage.textContent = '亮度区域已定义。现在请绘制数字识别区域。';
-        createPreviewCanvas('brightnessPrev', '亮度区域预览', brightnessRect);
-    } else if (currentMode === 'ocr_define') {
-        ocrRect = drawnRect;
-        currentMode = 'ready_to_analyze';
-        statusMessage.textContent = '数字识别区域已定义。点击"开始完整分析"按钮。';
-        startAnalysisBtn.disabled = false;
-        createPreviewCanvas('ocrPrev', 'OCR区域预览', ocrRect);
-    }
-    
-    clearAndRedrawRects();
-    createOrUpdateDebugPanel();
-});
-
 startAnalysisBtn.addEventListener('click', async () => {
     if (!brightnessRect || !ocrRect || !videoFile) {
-        alert('请先上传视频，并完整定义亮度和数字识别区域。');
+        alert('请先选择分析区域');
         return;
     }
     
@@ -349,7 +545,7 @@ startAnalysisBtn.addEventListener('click', async () => {
     await analyzeVideoBrightnessAndOCR();
 });
 
-// --- 主分析函数 ---
+// --- 主分析函数和其他辅助函数保持不变 ---
 async function analyzeVideoBrightnessAndOCR() {
     const duration = videoPlayer.duration;
     if (isNaN(duration) || duration === 0) {
@@ -369,10 +565,8 @@ async function analyzeVideoBrightnessAndOCR() {
     while (currentTime <= duration) {
         await seekToTime(currentTime);
         
-        // 将视频帧绘制到processing canvas
         processingCtx.drawImage(videoPlayer, 0, 0, videoNaturalWidth, videoNaturalHeight);
         
-        // 安全截取亮度区域
         const safeRect = getSafeRect(brightnessRect);
         const imageData = processingCtx.getImageData(safeRect.x, safeRect.y, safeRect.width, safeRect.height);
         const avgBrightness = calculateAverageBrightness(imageData);
@@ -416,7 +610,7 @@ async function analyzeVideoBrightnessAndOCR() {
     resetAnalysisState();
 }
 
-// --- 辅助函数 ---
+// 其他辅助函数保持不变...
 async function seekToTime(time) {
     return new Promise(resolve => {
         const onSeeked = () => {
@@ -479,10 +673,8 @@ async function performOCR(frameTime, occurrenceIdx) {
     }
     
     try {
-        // 绘制当前帧到processing canvas
         processingCtx.drawImage(videoPlayer, 0, 0, videoNaturalWidth, videoNaturalHeight);
         
-        // 安全截取OCR区域
         const safeOcrRect = getSafeRect(ocrRect);
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = safeOcrRect.width;
@@ -495,13 +687,8 @@ async function performOCR(frameTime, occurrenceIdx) {
             0, 0, safeOcrRect.width, safeOcrRect.height
         );
         
-        // 图像预处理
         const processedCanvas = preprocessImageForOCR(tempCanvas);
         
-        // 更新调试预览
-        updateOCRPreview(processedCanvas);
-        
-        // OCR识别
         await ocrWorker.setParameters({
             tessedit_char_whitelist: '0123456789.',
             tessedit_pageseg_mode: '7',
@@ -543,7 +730,6 @@ function preprocessImageForOCR(canvas) {
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
     
-    // 自适应阈值处理
     let totalBrightness = 0;
     for (let i = 0; i < data.length; i += 4) {
         totalBrightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
@@ -551,7 +737,6 @@ function preprocessImageForOCR(canvas) {
     const avgBrightness = totalBrightness / (data.length / 4);
     const threshold = Math.max(120, Math.min(200, avgBrightness + 30));
     
-    // 二值化处理
     for (let i = 0; i < data.length; i += 4) {
         const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
         const color = avg >= threshold ? 255 : 0;
@@ -563,7 +748,6 @@ function preprocessImageForOCR(canvas) {
     
     ctx.putImageData(imageData, 0, 0);
     
-    // 放大图像提高OCR精度
     const scaleFactor = 3;
     const scaledCanvas = document.createElement('canvas');
     scaledCanvas.width = canvas.width * scaleFactor;
@@ -575,17 +759,7 @@ function preprocessImageForOCR(canvas) {
     return scaledCanvas;
 }
 
-function updateOCRPreview(processedCanvas) {
-    const debugCanvas = document.getElementById('ocrPrev');
-    if (debugCanvas && processedCanvas) {
-        const debugCtx = debugCanvas.getContext('2d');
-        debugCtx.clearRect(0, 0, debugCanvas.width, debugCanvas.height);
-        debugCtx.drawImage(processedCanvas, 0, 0, debugCanvas.width, debugCanvas.height);
-    }
-}
-
 function displayResults() {
-    // 生成表格
     let tableHTML = '<table><thead><tr><th>序号</th><th>帧时间 (s)</th><th>识别数字</th><th>置信度</th></tr></thead><tbody>';
     
     if (analysisResults.length === 0) {
@@ -605,7 +779,6 @@ function displayResults() {
     tableHTML += '</tbody></table>';
     resultsTableContainer.innerHTML = tableHTML;
     
-    // 生成图表
     if (chartInstance) chartInstance.destroy();
     chartInstance = new Chart(resultsChartCtx, {
         type: 'scatter',
@@ -658,7 +831,7 @@ function displayResults() {
 function resetAnalysisState() {
     startAnalysisBtn.disabled = false;
     currentMode = 'brightness';
-    createOrUpdateDebugPanel();
+    updateDebugPanel();
 }
 
 // --- 初始化 ---
