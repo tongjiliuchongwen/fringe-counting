@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <title>视频分析工具 - 修复版</title>
+    <title>视频分析工具 - 增强OCR版</title>
     <style>
         body {
             font-family: sans-serif;
@@ -21,13 +21,15 @@
             flex: 1;
         }
         .right-panel {
-            width: 320px;
+            width: 350px;
             background-color: #fff;
             padding: 15px;
             border-radius: 5px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             position: sticky;
             top: 20px;
+            max-height: 90vh;
+            overflow-y: auto;
         }
         #videoContainer {
             position: relative;
@@ -78,6 +80,28 @@
             font-size: 12px;
             color: #666;
         }
+        .strategy-previews {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 10px;
+        }
+        .strategy-preview {
+            width: 60px;
+            height: 40px;
+            border: 1px solid #ddd;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .strategy-preview:hover {
+            transform: scale(1.1);
+            border-color: #007bff;
+        }
+        .strategy-info {
+            font-size: 10px;
+            text-align: center;
+            margin-top: 2px;
+        }
         #controls, #results {
             margin-top: 20px;
             padding: 15px;
@@ -119,10 +143,11 @@
             width: 100%;
             border-collapse: collapse;
             margin-top: 10px;
+            font-size: 12px;
         }
         #resultsTableContainer th, #resultsTableContainer td {
             border: 1px solid #ddd;
-            padding: 8px;
+            padding: 6px;
             text-align: left;
         }
         #resultsTableContainer th {
@@ -142,24 +167,43 @@
             font-size: 12px;
             margin-top: 10px;
         }
-        .no-preview {
-            color: #999;
-            font-style: italic;
-            padding: 20px;
-            text-align: center;
-        }
         .ocr-test-result {
             margin-top: 10px;
             padding: 8px;
             background-color: #e9ecef;
             border-radius: 4px;
             font-family: monospace;
+            font-size: 11px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .no-preview {
+            color: #999;
+            font-style: italic;
+            padding: 20px;
+            text-align: center;
+        }
+        .progress-bar {
+            width: 100%;
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .progress-fill {
+            height: 20px;
+            background-color: #007bff;
+            border-radius: 4px;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
             font-size: 12px;
         }
     </style>
 </head>
 <body>
-    <h1>视频分析工具 - 修复版</h1>
+    <h1>视频分析工具 - 增强OCR版</h1>
 
     <div class="main-container">
         <div class="left-panel">
@@ -169,6 +213,9 @@
                 <button id="refreshPreviewBtn">刷新预览</button>
                 <button id="testOcrBtn" disabled>测试当前OCR</button>
                 <p id="statusMessage">请先上传视频。</p>
+                <div class="progress-bar" id="progressBar" style="display: none;">
+                    <div class="progress-fill" id="progressFill" style="width: 0%;">0%</div>
+                </div>
                 <div id="debugInfo"></div>
             </div>
 
@@ -196,7 +243,7 @@
                         🔴 亮度分析区域
                     </div>
                     <div class="preview-content">
-                        <canvas id="brightnessPreviewCanvas" class="preview-canvas" width="200" height="120"></canvas>
+                        <canvas id="brightnessPreviewCanvas" class="preview-canvas" width="250" height="150"></canvas>
                         <div class="preview-info" id="brightnessPreviewInfo">未定义区域</div>
                     </div>
                 </div>
@@ -206,18 +253,19 @@
                         🔵 OCR识别区域（原始）
                     </div>
                     <div class="preview-content">
-                        <canvas id="ocrPreviewCanvas" class="preview-canvas" width="200" height="120"></canvas>
+                        <canvas id="ocrPreviewCanvas" class="preview-canvas" width="250" height="150"></canvas>
                         <div class="preview-info" id="ocrPreviewInfo">未定义区域</div>
                     </div>
                 </div>
 
                 <div class="preview-item">
                     <div class="preview-header" style="color: #6f42c1;">
-                        🟣 OCR预处理结果
+                        🟣 多策略OCR预处理
                     </div>
                     <div class="preview-content">
-                        <canvas id="ocrProcessedPreviewCanvas" class="preview-canvas" width="200" height="120"></canvas>
+                        <canvas id="ocrProcessedPreviewCanvas" class="preview-canvas" width="250" height="150"></canvas>
                         <div class="preview-info" id="ocrProcessedPreviewInfo">未处理</div>
+                        <div class="strategy-previews" id="strategyPreviews"></div>
                         <div id="ocrTestResult" class="ocr-test-result" style="display:none;"></div>
                     </div>
                 </div>
@@ -227,6 +275,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="enhanced-ocr.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
