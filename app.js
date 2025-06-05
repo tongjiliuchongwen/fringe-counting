@@ -1,4 +1,4 @@
-// app.js - 智能增强版视频分析工具
+// app.js - 智能增强版视频分析工具 (修复版)
 
 // --- DOM 元素获取 ---
 const videoUpload = document.getElementById('videoUpload');
@@ -69,6 +69,25 @@ let currentMaximaProcessingIndex = 0;
 // 预览更新防抖
 let previewUpdateTimeout = null;
 
+// 依赖检查标志
+let dependenciesLoaded = false;
+
+// --- 依赖检查函数 ---
+function checkDependencies() {
+    const missing = [];
+    if (typeof Tesseract === 'undefined') missing.push('Tesseract.js');
+    if (typeof Chart === 'undefined') missing.push('Chart.js');
+    
+    if (missing.length > 0) {
+        alert(`缺少必要的库: ${missing.join(', ')}\n请检查网络连接后刷新页面。`);
+        updateProgress(-1, `依赖加载失败: ${missing.join(', ')}`);
+        return false;
+    }
+    
+    dependenciesLoaded = true;
+    return true;
+}
+
 // --- 进度条更新 ---
 function updateProgress(percentage, text) {
     if (percentage >= 0) {
@@ -92,7 +111,8 @@ function updateDebugInfo() {
         当前模式: ${currentMode}<br>
         当前时间: ${videoPlayer.currentTime ? videoPlayer.currentTime.toFixed(2) + 's' : 'N/A'}<br>
         亮度区域: ${brightnessRect ? `${Math.round(brightnessRect.x)},${Math.round(brightnessRect.y)},${Math.round(brightnessRect.width)},${Math.round(brightnessRect.height)}` : '未定义'}<br>
-        OCR区域: ${ocrRect ? `${Math.round(ocrRect.x)},${Math.round(ocrRect.y)},${Math.round(ocrRect.width)},${Math.round(ocrRect.height)}` : '未定义'}
+        OCR区域: ${ocrRect ? `${Math.round(ocrRect.x)},${Math.round(ocrRect.y)},${Math.round(ocrRect.width)},${Math.round(ocrRect.height)}` : '未定义'}<br>
+        依赖加载: ${dependenciesLoaded ? '✓' : '✗'}
     `;
 }
 
@@ -395,10 +415,20 @@ function showEmptyPreview(ctx, canvas, text) {
     ctx.fillText(text, canvas.width/2, canvas.height/2);
 }
 
-// --- OCR 初始化 ---
+// --- OCR 初始化 (改进版) ---
 async function initializeOCR() {
+    if (!dependenciesLoaded) {
+        updateProgress(-1, '等待依赖库加载完成...');
+        return;
+    }
+    
     updateProgress(0, '正在初始化 OCR 服务...');
     try {
+        // 检查 Tesseract 是否可用
+        if (typeof Tesseract === 'undefined') {
+            throw new Error('Tesseract.js 库未加载，请检查网络连接');
+        }
+        
         ocrWorker = await Tesseract.createWorker('eng', 1, {
             logger: m => {
                 if (m.status === 'recognizing text') {
@@ -421,23 +451,58 @@ async function initializeOCR() {
         console.log("增强OCR系统初始化完成");
     } catch (error) {
         console.error("OCR 初始化失败:", error);
-        updateProgress(-1, 'OCR 服务初始化失败。');
-        alert(`OCR 初始化失败: ${error.message}`);
+        updateProgress(-1, `OCR 服务初始化失败: ${error.message}`);
+        
+        // 提供用户友好的错误信息
+        if (error.message.includes('Tesseract')) {
+            statusMessage.innerHTML = `
+                OCR 服务初始化失败。可能的解决方案：<br>
+                1. 检查网络连接<br>
+                2. 刷新页面重试<br>
+                3. 尝试使用其他网络环境
+            `;
+        }
     }
 }
 
-// --- 画布尺寸同步函数 ---
+// --- 画布尺寸同步函数 (修复版) ---
 function syncCanvasWithVideo() {
+    // 检查视频是否真正加载完成
+    if (!videoPlayer.videoWidth || !videoPlayer.videoHeight) {
+        console.error('视频尺寸无效:', videoPlayer.videoWidth, videoPlayer.videoHeight);
+        setTimeout(() => syncCanvasWithVideo(), 100); // 重试
+        return;
+    }
+    
     const videoRect = videoPlayer.getBoundingClientRect();
     videoDisplayWidth = videoRect.width;
     videoDisplayHeight = videoRect.height;
     
+    // 确保有有效的显示尺寸
+    if (videoDisplayWidth === 0 || videoDisplayHeight === 0) {
+        console.error('视频显示尺寸无效:', videoDisplayWidth, videoDisplayHeight);
+        setTimeout(() => syncCanvasWithVideo(), 100); // 重试
+        return;
+    }
+    
+    videoNaturalWidth = videoPlayer.videoWidth;
+    videoNaturalHeight = videoPlayer.videoHeight;
+    
+    // 设置画布内部尺寸
     drawingCanvas.width = videoNaturalWidth;
     drawingCanvas.height = videoNaturalHeight;
     
+    // 设置画布显示尺寸和位置
     drawingCanvas.style.width = videoDisplayWidth + 'px';
     drawingCanvas.style.height = videoDisplayHeight + 'px';
+    drawingCanvas.style.position = 'absolute';
+    drawingCanvas.style.top = '0';
+    drawingCanvas.style.left = '0';
+    drawingCanvas.style.zIndex = '10';
+    drawingCanvas.style.pointerEvents = 'auto';
+    drawingCanvas.style.cursor = 'crosshair';
     
+    // 设置处理画布
     processingCanvas.width = videoNaturalWidth;
     processingCanvas.height = videoNaturalHeight;
     
@@ -446,16 +511,34 @@ function syncCanvasWithVideo() {
     schedulePreviewUpdate();
 }
 
-// --- 坐标转换函数 ---
+// --- 坐标转换函数 (增强版) ---
 function getCanvasCoordinates(mouseEvent) {
     const rect = drawingCanvas.getBoundingClientRect();
+    
+    // 检查画布尺寸是否有效
+    if (rect.width === 0 || rect.height === 0 || videoNaturalWidth === 0 || videoNaturalHeight === 0) {
+        console.error('画布尺寸无效:', {
+            displayRect: rect,
+            naturalSize: { width: videoNaturalWidth, height: videoNaturalHeight }
+        });
+        return { x: 0, y: 0 };
+    }
+    
     const scaleX = videoNaturalWidth / rect.width;
     const scaleY = videoNaturalHeight / rect.height;
     
-    return {
+    const coords = {
         x: (mouseEvent.clientX - rect.left) * scaleX,
         y: (mouseEvent.clientY - rect.top) * scaleY
     };
+    
+    console.log('鼠标坐标转换:', {
+        mouse: { x: mouseEvent.clientX - rect.left, y: mouseEvent.clientY - rect.top },
+        canvas: coords,
+        scale: { x: scaleX, y: scaleY }
+    });
+    
+    return coords;
 }
 
 // --- 矩形绘制函数 ---
@@ -498,21 +581,35 @@ videoUpload.addEventListener('change', (event) => {
     updateProgress(-1, '视频加载中...');
 });
 
-// 视频元数据加载完成
+// 视频元数据加载完成 (改进版)
 videoPlayer.addEventListener('loadedmetadata', () => {
-    videoNaturalWidth = videoPlayer.videoWidth;
-    videoNaturalHeight = videoPlayer.videoHeight;
+    console.log('视频元数据加载完成');
+    console.log('原始尺寸:', videoPlayer.videoWidth, videoPlayer.videoHeight);
     
-    console.log(`视频原始尺寸: ${videoNaturalWidth} × ${videoNaturalHeight}`);
+    // 等待视频元素完全准备好
+    function waitForVideoReady() {
+        if (videoPlayer.videoWidth > 0 && videoPlayer.videoHeight > 0) {
+            videoNaturalWidth = videoPlayer.videoWidth;
+            videoNaturalHeight = videoPlayer.videoHeight;
+            
+            console.log(`视频原始尺寸: ${videoNaturalWidth} × ${videoNaturalHeight}`);
+            
+            // 稍微延迟以确保DOM更新
+            setTimeout(() => {
+                syncCanvasWithVideo();
+                updateProgress(-1, '视频已加载。请在视频上绘制亮度分析区域（红色框）。');
+                currentMode = 'brightness';
+                analysisSettings.style.display = 'block';
+                updateDebugInfo();
+                schedulePreviewUpdate();
+            }, 300);
+        } else {
+            console.log('等待视频尺寸信息...');
+            setTimeout(waitForVideoReady, 100);
+        }
+    }
     
-    setTimeout(() => {
-        syncCanvasWithVideo();
-        updateProgress(-1, '视频已加载。请在视频上绘制亮度分析区域（红色框）。');
-        currentMode = 'brightness';
-        analysisSettings.style.display = 'block';
-        updateDebugInfo();
-        schedulePreviewUpdate();
-    }, 200);
+    waitForVideoReady();
 });
 
 // 视频播放相关事件
@@ -568,9 +665,18 @@ testOcrBtn.addEventListener('click', async () => {
     }
 });
 
-// 鼠标绘制事件 - 完整版本
+// 鼠标绘制事件 - 完整版本 (增强错误检查)
 drawingCanvas.addEventListener('mousedown', (e) => {
-    if (!videoFile || currentMode === 'analyzing') return;
+    if (!videoFile || currentMode === 'analyzing') {
+        console.log('无法绘制: videoFile=', !!videoFile, ', currentMode=', currentMode);
+        return;
+    }
+    
+    if (drawingCanvas.width === 0 || drawingCanvas.height === 0) {
+        console.error('画布尺寸为0，无法绘制');
+        alert('画布未正确初始化，请刷新页面重试');
+        return;
+    }
     
     isDrawing = true;
     const coords = getCanvasCoordinates(e);
@@ -782,104 +888,34 @@ async function analyzeBrightness() {
 }
 
 // --- 智能峰值检测 ---
--function findLocalMaxima() {
--    localMaximaFrames = [];
--    
--    // 如果数据点过少，直接退到全局最大值
--    if (brightnessData.length < 10) {
--        console.warn('数据点太少，使用全局最大亮度帧作为峰值回退');
--        const maxItem = brightnessData.reduce((p, c) => c.avgBrightness > p.avgBrightness ? c : p, brightnessData[0]);
--        localMaximaFrames.push({
--            time: maxItem.frameTime,
--            value: maxItem.avgBrightness,
--            // 可以加上一个标记
--            fallback: true
--        });
--        return;
--    }
--    
--    const smoothedValues = brightnessData.map(d => d.avgBrightness);
--    const sensitivity = peakSensitivity.value;
--    
--    // 使用我们封装的智能峰值检测器
--    const peaks = PeakDetector.findPeaks(smoothedValues, {
--        sensitivity: sensitivity
--    });
--    
--    // 如果没有检测到任何峰值，也退到全局最大
--    if (peaks.length === 0) {
--        console.warn('没有局部峰值，使用全局最大亮度帧作为峰值回退');
--        const maxItem = brightnessData.reduce((p, c) => c.avgBrightness > p.avgBrightness ? c : p, brightnessData[0]);
--        localMaximaFrames.push({
--            time: maxItem.frameTime,
--            value: maxItem.avgBrightness,
--            fallback: true
--        });
--        return;
--    }
--    
--    // 正常把所有候选峰值转成 localMaximaFrames
--    localMaximaFrames = peaks.map(peak => ({
--        frameNumber: peak.index,
--        time: brightnessData[peak.index].frameTime,
--        value: peak.value,
--        prominence: peak.prominence.value || peak.prominence,
--        significance: peak.significance
--    }));
--    
--    console.log(`智能峰值检测完成: 检测到 ${localMaximaFrames.length} 个可靠峰值`, localMaximaFrames);
--}
 function findLocalMaxima() {
-+    localMaximaFrames = [];
-+    const N = brightnessData.length;
-+    if (N === 0) return;
-+
-+    // 提取平滑亮度序列
-+    const values = brightnessData.map(d => d.avgBrightness);
-+
-+    // 计算动态阈值：均值 + 0.5 * 标准差
-+    const mean = values.reduce((a, b) => a + b, 0) / N;
-+    const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / N;
-+    const stdDev = Math.sqrt(variance);
-+    const threshold = mean + 0.5 * stdDev;
-+
-+    // 局部最大值检测窗口大小，保证不会过于接近
-+    const windowSize = Math.max(1, Math.floor(N / 30));
-+
-+    for (let i = windowSize; i < N - windowSize; i++) {
-+        const current = values[i];
-+        // 只有大于阈值才考虑
-+        if (current < threshold) continue;
-+
-+        // 检查左右 windowSize 内是否都是当前最大
-+        let isPeak = true;
-+        for (let j = i - windowSize; j <= i + windowSize; j++) {
-+            if (j !== i && values[j] >= current) {
-+                isPeak = false;
-+                break;
-+            }
-+        }
-+        if (isPeak) {
-+            localMaximaFrames.push({
-+                frameNumber: i,
-+                time: brightnessData[i].frameTime,
-+                value: current
-+            });
-+        }
-+    }
-+
-+    // 如果没有任何局部峰值，则选取全局最大作为至少一个峰值
-+    if (localMaximaFrames.length === 0) {
-+        const maxIdx = values.indexOf(Math.max(...values));
-+        localMaximaFrames.push({
-+            frameNumber: maxIdx,
-+            time: brightnessData[maxIdx].frameTime,
-+            value: values[maxIdx]
-+        });
-+    }
-+
-+    console.log(`局域峰值检测完成: 共检测到 ${localMaximaFrames.length} 个峰值`, localMaximaFrames);
-+}
+    localMaximaFrames = [];
+    
+    if (brightnessData.length < 10) {
+        console.log('数据点太少，无法进行可靠的峰值检测');
+        return;
+    }
+    
+    const smoothedValues = brightnessData.map(d => d.avgBrightness);
+    const sensitivity = peakSensitivity.value;
+    
+    // 使用智能峰值检测器
+    const peaks = PeakDetector.findPeaks(smoothedValues, {
+        sensitivity: sensitivity
+    });
+    
+    // 转换为localMaximaFrames格式
+    localMaximaFrames = peaks.map(peak => ({
+        frameNumber: peak.index,
+        time: brightnessData[peak.index].frameTime,
+        value: peak.value,
+        prominence: peak.prominence.value || peak.prominence,
+        significance: peak.significance
+    }));
+    
+    console.log(`智能峰值检测完成: 检测到${localMaximaFrames.length}个可靠峰值`);
+}
+
 // --- 完整分析流程 ---
 async function performCompleteAnalysis() {
     try {
@@ -1193,8 +1229,29 @@ function createResultChart() {
     });
 }
 
-// --- 初始化 ---
+// --- 初始化 (改进版) ---
 window.addEventListener('load', () => {
-    initializeOCR();
+    console.log('页面加载完成，开始初始化...');
+    
+    // 检查依赖
+    if (checkDependencies()) {
+        initializeOCR();
+    } else {
+        // 延迟重试依赖检查
+        setTimeout(() => {
+            if (checkDependencies()) {
+                initializeOCR();
+            }
+        }, 2000);
+    }
+    
     updateDebugInfo();
+});
+
+// 添加全局错误处理
+window.addEventListener('error', (event) => {
+    console.error('全局错误:', event.error);
+    if (event.error && event.error.message.includes('Canvas')) {
+        alert('画布操作出错，请刷新页面重试');
+    }
 });
