@@ -829,7 +829,7 @@ async function analyzeBrightness() {
 -    
 -    console.log(`智能峰值检测完成: 检测到 ${localMaximaFrames.length} 个可靠峰值`, localMaximaFrames);
 -}
-+function findLocalMaxima() {
+function findLocalMaxima() {
 +    localMaximaFrames = [];
 +    const N = brightnessData.length;
 +    if (N === 0) return;
